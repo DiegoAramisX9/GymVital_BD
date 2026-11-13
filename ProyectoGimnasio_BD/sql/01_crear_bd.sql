@@ -40,3 +40,21 @@ COLLATE Modern_Spanish_CI_AI;';
 EXEC (@sql);
 GO
 
+ALTER DATABASE GimnasioDB MODIFY FILEGROUP FG_DATOS DEFAULT;
+ALTER DATABASE GimnasioDB SET RECOVERY FULL;              -- necesario para backups de log y point-in-time
+ALTER DATABASE GimnasioDB SET PAGE_VERIFY CHECKSUM;       -- detecta corrupción de páginas
+ALTER DATABASE GimnasioDB SET AUTO_UPDATE_STATISTICS ON;
+ALTER DATABASE GimnasioDB SET QUERY_STORE = ON;           -- evidencia de rendimiento (Integrante 4)
+GO
+
+/* ---- Evidencia para el informe: archivos y filegroups ---- */
+USE GimnasioDB;
+GO
+SELECT fg.name AS Filegroup, fg.is_default AS EsDefault, f.name AS ArchivoLogico, f.physical_name AS RutaFisica,
+       f.size*8/1024 AS TamanoMB, f.max_size, f.growth*8/1024 AS CrecimientoMB
+FROM sys.database_files f LEFT JOIN sys.filegroups fg ON fg.data_space_id = f.data_space_id;
+
+SELECT name, collation_name, recovery_model_desc, page_verify_option_desc, compatibility_level
+FROM sys.databases WHERE name = 'GimnasioDB';
+GO
+
