@@ -161,3 +161,30 @@ CREATE TABLE auditoria.BitacoraBackup (
 );
 GO
 
+/* ---------- DICCIONARIO DE DATOS (extended properties) ---------- */
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Clientes inscritos en el gimnasio (datos personales)', N'SCHEMA', N'personas',  N'TABLE', N'Socio';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Instructores que imparten las clases',                  N'SCHEMA', N'personas',  N'TABLE', N'Entrenador';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Espacios físicos donde se imparten clases',             N'SCHEMA', N'operacion', N'TABLE', N'Sala';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Catálogo de disciplinas (Yoga, Spinning, ...)',          N'SCHEMA', N'operacion', N'TABLE', N'TipoClase';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Clase programada: tipo + entrenador + sala + horario',   N'SCHEMA', N'operacion', N'TABLE', N'Sesion';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Reserva de un socio en una sesión (y su asistencia)',    N'SCHEMA', N'operacion', N'TABLE', N'Reserva';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Planes de membresía y su precio',                        N'SCHEMA', N'finanzas',  N'TABLE', N'PlanMembresia';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Periodo contratado por un socio con un plan',            N'SCHEMA', N'finanzas',  N'TABLE', N'Suscripcion';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Cobros asociados a una suscripción',                     N'SCHEMA', N'finanzas',  N'TABLE', N'Pago';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Valores: Confirmada | Cancelada | Asistio | NoAsistio',  N'SCHEMA', N'operacion', N'TABLE', N'Reserva', N'COLUMN', N'Estado';
+EXEC sys.sp_addextendedproperty N'MS_Description', N'Valores: Pagado | Pendiente | Rechazado',                 N'SCHEMA', N'finanzas',  N'TABLE', N'Pago',    N'COLUMN', N'Estado';
+GO
+
+/* ---------- Evidencia para el informe: diccionario de datos ---------- */
+SELECT s.name AS Esquema, t.name AS Tabla, c.column_id AS Nro, c.name AS Columna,
+       ty.name + CASE WHEN ty.name LIKE '%char%' THEN '(' + CASE c.max_length WHEN -1 THEN 'MAX' ELSE CAST(c.max_length / CASE WHEN ty.name LIKE 'n%' THEN 2 ELSE 1 END AS VARCHAR(5)) END + ')' ELSE '' END AS Tipo,
+       IIF(c.is_nullable = 1, 'Sí', 'No') AS Nulo, CAST(ep.value AS NVARCHAR(200)) AS Descripcion
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+JOIN sys.columns c ON c.object_id = t.object_id
+JOIN sys.types ty ON ty.user_type_id = c.user_type_id
+LEFT JOIN sys.extended_properties ep ON ep.major_id = t.object_id AND ep.minor_id = c.column_id AND ep.name = 'MS_Description'
+WHERE s.name IN ('personas','operacion','finanzas')
+ORDER BY s.name, t.name, c.column_id;
+GO
+
