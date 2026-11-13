@@ -1,0 +1,14 @@
+CADA INTEGRANTE ABRE SOLO SU ARCHIVO:
+  Integrante_1_Diseno.txt
+  Integrante_2_Datos_y_PowerBI.txt
+  Integrante_3_Seguridad_y_Presentacion.txt
+  Integrante_4_Optimizacion.txt
+  Integrante_5_Backup_y_Recuperacion.txt
+
+ORDEN DE TRABAJO (quien depende de quien):
+  1) Int. 1 crea repo y sube 01 + 02 (merge a develop)  -> todos hacen git pull
+  2) Int. 2 (datos), 3 (seguridad), 4 (consultas) y 5 (backups) trabajan en paralelo; 2 carga datos antes que 4 y 5 midan.
+  3) Int. 2 vistas (06) -> luego Int. 3 pruebas (04b) y dashboard
+  4) Todos: capturas -> informe -> diapositivas (Int. 3 monta, Int. 1 integra el informe)
+  5) Ensayo general y entrega (tag v1.0 en main)
+Cada archivo trae: pasos, codigo para pegar con marcas de COMMIT, evidencias a capturar, informe, guion de diapositivas y preguntas de defensa.

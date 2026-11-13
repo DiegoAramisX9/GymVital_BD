@@ -1,0 +1,5 @@
+plan_id,nombre,precio,duracion_meses,descripcion
+1,Básico Mensual,25.00,1,Acceso a sala de pesas
+2,Estándar Mensual,40.00,1,Sala + clases grupales
+3,Premium Mensual,60.00,1,Todo incluido + entrenador
+4,Estándar Trimestral,108.00,3,"Sala + clases, 10% descuento"

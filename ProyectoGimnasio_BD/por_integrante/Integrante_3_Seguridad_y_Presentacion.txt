@@ -1,0 +1,302 @@
+==============================================================================
+INTEGRANTE 3 SEGURIDAD Y PRESENTACION - PROYECTO GYMVITAL (ADMINISTRACION DE BD)
+==============================================================================
+REGLAS DEL EQUIPO
+  - Mensajes de commit:  tipo(area): descripcion   (feat, fix, perf, test, docs, chore)
+  - Commits pequenos: uno por cada marca ">>>>>> COMMIT AQUI" que veras dentro del codigo.
+  - Las marcas de commit son COMENTARIOS: puedes pegar todo el codigo tal cual.
+  - SQL Server 2025 + SSMS. Usa un login sysadmin (Windows) para ejecutar.
+  - Las capturas se guardan en  docs/evidencias/intN_nombre.png  (crea la carpeta si no existe).
+  - Todos deben poder explicar y demostrar CUALQUIER bloque en la defensa.
+PASO 0 - PREPARAR GIT (una sola vez)
+  git clone <URL_DEL_REPO>
+  cd ProyectoGimnasio_BD
+  git checkout develop
+  git pull
+  git checkout -b feature/int3-seguridad
+  (Todo lo que hagas va en ESTA rama. Nunca hagas push a main.)
+
+ROL: Seguridad + montaje de la presentacion
+RUBRICA: Seguridad (5 pts) + Presentacion
+ARCHIVOS: sql/04_seguridad.sql, sql/04b_pruebas_seguridad.sql, presentacion/Defensa_GymVital.pptx
+DIAPOSITIVAS: 3, 4 y tu parte de la 12. Ademas armas y ensayas TODA la presentacion.
+REQUISITO: BD creada y cargada (01, 02, 03 en tu equipo). Para 04b necesitas ademas el script 06 del Integrante 2.
+NOTA: la instancia debe estar en autenticacion MIXTA (SSMS > clic derecho al servidor > Propiedades > Seguridad),
+      reiniciar el servicio SQL Server despues de cambiarlo.
+
+==============================================================================
+PASO 1 - Seguridad (script 04)
+==============================================================================
+  Pega el codigo de 04_seguridad.sql y ejecutalo completo conectado como sysadmin.
+  RESULTADO ESPERADO: 5 logins, 5 usuarios, 4 roles; al final 2 consultas:
+    7.1 pertenencia a roles (cada usr_ dentro de su rol)  >>> CAPTURA 1
+    7.2 permisos GRANT/DENY por rol                         >>> CAPTURA 2 (base de la matriz de privilegios)
+  Verifica el enmascaramiento: ver paso 3.
+
+==============================================================================
+PASO 2 - Pruebas de acceso denegado (script 04b)
+==============================================================================
+  Ejecuta primero el script 06 (Integrante 2), luego 04b completo.
+  RESULTADO ESPERADO: 15 filas con Veredicto = OK (10 DENEGADO esperados + 5 PERMITIDO esperados).
+  >>> CAPTURA 3: tabla de veredictos.  >>> CAPTURA 4: un mensaje de error real, por ejemplo
+      "The DELETE permission was denied on the object 'Reserva', database 'GimnasioDB', schema 'operacion'."
+  Tambien muestra: los dos SELECT de enmascaramiento (recepcion ve el email real; finanzas lo ve como aXXX@XXXX.com)
+  >>> CAPTURA 5.
+
+==============================================================================
+PASO 3 - Demo en vivo con un login real (para la defensa)
+==============================================================================
+  En SSMS: Conectar > Motor de base de datos > Autenticacion SQL Server > lg_entrenador / Gym#Entre2026!
+  Nueva consulta:  DELETE FROM operacion.Reserva WHERE ReservaID = 100;   -> debe fallar.
+  Esto es lo que pedira el docente ("reto de acceso denegado"). Ensayalo.
+
+##############################################################################
+# ARCHIVO: sql/04_seguridad.sql
+# Logins, usuarios, roles, permisos, enmascaramiento, auditoria DDL
+##############################################################################
+======== INICIO DEL CODIGO (sql/04_seguridad.sql) ========
+/* =====================================================================
+   Archivo : 04_seguridad.sql
+   Responsable: Integrante 3 (Seguridad)
+   Objetivo: Logins, usuarios, roles, GRANT/DENY, mínimo privilegio,
+             enmascaramiento dinámico de datos y auditoría de DDL.
+   Requisito: autenticación MIXTA en la instancia (SQL + Windows) para los logins SQL.
+   IMPORTANTE: las contraseñas de abajo son de ejemplo para el entorno académico;
+               en producción se guardan en un gestor de secretos.
+   ===================================================================== */
+USE master;
+GO
+/* ---------- 1. LOGINS (nivel servidor) ---------- */
+IF SUSER_ID('lg_recepcion') IS NULL CREATE LOGIN lg_recepcion WITH PASSWORD = N'Gym#Recep2026!', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_DATABASE = GimnasioDB;
+IF SUSER_ID('lg_entrenador') IS NULL CREATE LOGIN lg_entrenador WITH PASSWORD = N'Gym#Entre2026!', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_DATABASE = GimnasioDB;
+IF SUSER_ID('lg_finanzas')  IS NULL CREATE LOGIN lg_finanzas  WITH PASSWORD = N'Gym#Finan2026!', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_DATABASE = GimnasioDB;
+IF SUSER_ID('lg_reportes')  IS NULL CREATE LOGIN lg_reportes  WITH PASSWORD = N'Gym#Repor2026!', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_DATABASE = GimnasioDB;
+IF SUSER_ID('lg_admin_bd')  IS NULL CREATE LOGIN lg_admin_bd  WITH PASSWORD = N'Gym#Admin2026!', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF, DEFAULT_DATABASE = GimnasioDB;
+GO
+
+USE GimnasioDB;
+GO
+/* ---------- 2. USUARIOS (nivel base de datos) ---------- */
+CREATE USER usr_recepcion FOR LOGIN lg_recepcion;
+CREATE USER usr_entrenador FOR LOGIN lg_entrenador;
+CREATE USER usr_finanzas  FOR LOGIN lg_finanzas;
+CREATE USER usr_reportes  FOR LOGIN lg_reportes;      -- cuenta de servicio de Power BI
+CREATE USER usr_admin_bd  FOR LOGIN lg_admin_bd;
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/04_seguridad.sql && git commit -m "feat(seg): logins y usuarios"
+/* ---------- 3. ROLES: los permisos se asignan a ROLES, nunca a usuarios sueltos ---------- */
+CREATE ROLE rol_recepcion;
+CREATE ROLE rol_entrenador;
+CREATE ROLE rol_finanzas;
+CREATE ROLE rol_reportes;
+GO
+ALTER ROLE rol_recepcion  ADD MEMBER usr_recepcion;
+ALTER ROLE rol_entrenador ADD MEMBER usr_entrenador;
+ALTER ROLE rol_finanzas   ADD MEMBER usr_finanzas;
+ALTER ROLE rol_reportes   ADD MEMBER usr_reportes;
+ALTER ROLE db_owner       ADD MEMBER usr_admin_bd;    -- administrador del proyecto (no se usa 'sa')
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/04_seguridad.sql && git commit -m "feat(seg): roles y membresias"
+/* ---------- 4. PERMISOS (principio de MÍNIMO PRIVILEGIO) ---------- */
+/* 4.1 RECEPCIÓN: atiende socios, gestiona reservas y registra cobros. Nunca borra. */
+GRANT SELECT, INSERT, UPDATE ON SCHEMA::personas  TO rol_recepcion;
+DENY  DELETE                 ON SCHEMA::personas  TO rol_recepcion;
+GRANT SELECT                 ON SCHEMA::operacion TO rol_recepcion;
+GRANT INSERT, UPDATE         ON operacion.Reserva TO rol_recepcion;
+DENY  DELETE                 ON SCHEMA::operacion TO rol_recepcion;
+GRANT SELECT                 ON SCHEMA::finanzas  TO rol_recepcion;
+GRANT INSERT                 ON finanzas.Pago         TO rol_recepcion;
+GRANT INSERT                 ON finanzas.Suscripcion  TO rol_recepcion;
+DENY  UPDATE, DELETE         ON SCHEMA::finanzas  TO rol_recepcion;
+GRANT UNMASK TO rol_recepcion;                         -- ve email/teléfono reales para contactar al socio
+
+/* 4.2 ENTRENADOR: consulta su agenda y marca asistencia; ve SÓLO columnas no sensibles del socio. */
+GRANT SELECT ON SCHEMA::operacion TO rol_entrenador;
+GRANT UPDATE (Estado) ON operacion.Reserva TO rol_entrenador;     -- permiso a nivel de COLUMNA
+GRANT SELECT (SocioID, Nombres, Apellidos, Estado) ON personas.Socio TO rol_entrenador;
+GRANT SELECT ON personas.Entrenador TO rol_entrenador;
+DENY  SELECT, INSERT, UPDATE, DELETE ON SCHEMA::finanzas TO rol_entrenador;   -- sin acceso a dinero
+DENY  DELETE ON SCHEMA::operacion TO rol_entrenador;
+
+/* 4.3 FINANZAS: gestiona cobros. Ve al socio pero con email/teléfono ENMASCARADOS (sin UNMASK). */
+GRANT SELECT, INSERT, UPDATE ON SCHEMA::finanzas TO rol_finanzas;
+DENY  DELETE                 ON SCHEMA::finanzas TO rol_finanzas;
+GRANT SELECT ON personas.Socio TO rol_finanzas;
+DENY  SELECT, INSERT, UPDATE, DELETE ON SCHEMA::operacion TO rol_finanzas;
+
+/* 4.4 REPORTES (Power BI): SÓLO lectura sobre el esquema 'reportes' (vistas).
+       Las vistas funcionan gracias al ENCADENAMIENTO DE PROPIEDAD (mismo dueño dbo),
+       por eso NO se necesita ningún permiso sobre las tablas base. */
+GRANT SELECT ON SCHEMA::reportes TO rol_reportes;
+DENY  SELECT, INSERT, UPDATE, DELETE ON SCHEMA::personas  TO rol_reportes;
+DENY  SELECT, INSERT, UPDATE, DELETE ON SCHEMA::operacion TO rol_reportes;
+DENY  SELECT, INSERT, UPDATE, DELETE ON SCHEMA::finanzas  TO rol_reportes;
+DENY  SELECT, INSERT, UPDATE, DELETE ON SCHEMA::staging   TO rol_reportes;
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/04_seguridad.sql && git commit -m "feat(seg): permisos por esquema, columna y DENY"
+/* ---------- 5. ENMASCARAMIENTO DINÁMICO DE DATOS (datos personales) ---------- */
+ALTER TABLE personas.Socio ALTER COLUMN Email    ADD MASKED WITH (FUNCTION = 'email()');
+ALTER TABLE personas.Socio ALTER COLUMN Telefono ADD MASKED WITH (FUNCTION = 'partial(0,"****-",4)');
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/04_seguridad.sql && git commit -m "feat(seg): enmascaramiento dinamico de datos"
+/* ---------- 6. AUDITORÍA DE CAMBIOS DDL (quién creó/alteró/borró objetos) ---------- */
+CREATE OR ALTER TRIGGER trg_AuditarDDL ON DATABASE FOR DDL_DATABASE_LEVEL_EVENTS
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @e XML = EVENTDATA();
+    INSERT auditoria.BitacoraDDL (Usuario, Evento, Objeto, Sentencia)
+    VALUES (ORIGINAL_LOGIN(),
+            @e.value('(/EVENT_INSTANCE/EventType)[1]',  'NVARCHAR(100)'),
+            @e.value('(/EVENT_INSTANCE/SchemaName)[1]', 'NVARCHAR(100)') + N'.' + @e.value('(/EVENT_INSTANCE/ObjectName)[1]', 'NVARCHAR(200)'),
+            @e.value('(/EVENT_INSTANCE/TSQLCommand/CommandText)[1]', 'NVARCHAR(MAX)'));
+END
+GO
+GRANT SELECT ON SCHEMA::auditoria TO usr_admin_bd;   -- (db_owner ya lo tiene; se deja explícito para la matriz)
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/04_seguridad.sql && git commit -m "feat(seg): trigger de auditoria DDL"
+/* ---------- 7. EVIDENCIA PARA EL INFORME: matriz de privilegios real ---------- */
+-- 7.1 Pertenencia a roles
+SELECT r.name AS Rol, m.name AS Usuario
+FROM sys.database_role_members rm
+JOIN sys.database_principals r ON r.principal_id = rm.role_principal_id
+JOIN sys.database_principals m ON m.principal_id = rm.member_principal_id
+WHERE r.name LIKE 'rol_%' OR r.name = 'db_owner'
+ORDER BY r.name;
+
+-- 7.2 Permisos efectivos declarados (GRANT/DENY) por rol
+SELECT pr.name AS Rol, dp.state_desc AS Estado, dp.permission_name AS Permiso, dp.class_desc AS Clase,
+       CASE dp.class WHEN 3 THEN SCHEMA_NAME(dp.major_id)
+                     WHEN 1 THEN OBJECT_SCHEMA_NAME(dp.major_id) + '.' + OBJECT_NAME(dp.major_id) END AS Objeto,
+       COL_NAME(dp.major_id, NULLIF(dp.minor_id, 0)) AS Columna
+FROM sys.database_permissions dp
+JOIN sys.database_principals pr ON pr.principal_id = dp.grantee_principal_id
+WHERE pr.name LIKE 'rol_%'
+ORDER BY pr.name, Objeto, dp.permission_name;
+GO
+
+-- >>>>>> COMMIT FINAL: git add sql/04_seguridad.sql && git commit -m "docs(seg): consultas de evidencia de roles y permisos"
+======== FIN DEL CODIGO (sql/04_seguridad.sql) ========
+
+##############################################################################
+# ARCHIVO: sql/04b_pruebas_seguridad.sql
+# Pruebas de acceso denegado y permitido
+##############################################################################
+======== INICIO DEL CODIGO (sql/04b_pruebas_seguridad.sql) ========
+/* =====================================================================
+   Archivo : 04b_pruebas_seguridad.sql
+   Responsable: Integrante 3 (Seguridad)
+   Objetivo: DEMOSTRACIÓN DE ACCESO DENEGADO (diapositiva 4 de la defensa).
+   Ejecutar DESPUÉS de 06_vistas_powerbi.sql.  Cada prueba cambia de contexto con
+   EXECUTE AS USER, captura el error y vuelve con REVERT. Las pruebas permitidas
+   se envuelven en una transacción con ROLLBACK para NO modificar datos.
+   ===================================================================== */
+USE GimnasioDB;
+GO
+SET NOCOUNT ON;
+
+/* Procedimiento auxiliar de prueba: ejecuta una sentencia como otro usuario y reporta el resultado */
+CREATE OR ALTER PROCEDURE dbo.usp_ProbarComo @Usuario SYSNAME, @Sentencia NVARCHAR(MAX), @Esperado VARCHAR(10)
+AS
+BEGIN
+    DECLARE @sql NVARCHAR(MAX) = N'EXECUTE AS USER = ''' + @Usuario + N'''; BEGIN TRAN; ' + @Sentencia + N'; ROLLBACK; REVERT;';
+    DECLARE @res VARCHAR(10) = 'PERMITIDO', @msg NVARCHAR(500) = N'';
+    BEGIN TRY
+        EXEC (@sql);
+    END TRY
+    BEGIN CATCH
+        SET @res = 'DENEGADO'; SET @msg = ERROR_MESSAGE();
+        IF XACT_STATE() <> 0 ROLLBACK;
+        REVERT;
+    END CATCH
+    SELECT @Usuario AS Usuario, LEFT(@Sentencia, 70) AS Sentencia, @Esperado AS Esperado, @res AS Obtenido,
+           IIF(@Esperado = @res, 'OK', 'FALLO') AS Veredicto, @msg AS MensajeDeError;
+END
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/04b_pruebas_seguridad.sql && git commit -m "test(seg): procedimiento auxiliar de pruebas"
+/* ---------- Pruebas que DEBEN FALLAR (acceso denegado) ---------- */
+EXEC dbo.usp_ProbarComo 'usr_entrenador', N'DELETE FROM operacion.Reserva WHERE ReservaID = 100', 'DENEGADO';
+EXEC dbo.usp_ProbarComo 'usr_entrenador', N'SELECT TOP 1 * FROM finanzas.Pago', 'DENEGADO';
+EXEC dbo.usp_ProbarComo 'usr_entrenador', N'SELECT Email FROM personas.Socio', 'DENEGADO';          -- columna no autorizada
+EXEC dbo.usp_ProbarComo 'usr_recepcion',  N'DELETE FROM personas.Socio WHERE SocioID = 1', 'DENEGADO';
+EXEC dbo.usp_ProbarComo 'usr_recepcion',  N'UPDATE finanzas.Pago SET Monto = 1 WHERE PagoID = 1', 'DENEGADO';
+EXEC dbo.usp_ProbarComo 'usr_finanzas',   N'SELECT TOP 1 * FROM operacion.Reserva', 'DENEGADO';
+EXEC dbo.usp_ProbarComo 'usr_finanzas',   N'DELETE FROM finanzas.Pago WHERE PagoID = 1', 'DENEGADO';
+EXEC dbo.usp_ProbarComo 'usr_reportes',   N'SELECT TOP 1 * FROM personas.Socio', 'DENEGADO';
+EXEC dbo.usp_ProbarComo 'usr_reportes',   N'UPDATE reportes.vw_OcupacionClases SET Sesiones = 0', 'DENEGADO';
+EXEC dbo.usp_ProbarComo 'usr_reportes',   N'DROP TABLE operacion.Reserva', 'DENEGADO';
+
+/* ---------- Pruebas que DEBEN FUNCIONAR (permisos legítimos) ---------- */
+EXEC dbo.usp_ProbarComo 'usr_entrenador', N'UPDATE operacion.Reserva SET Estado = ''Asistio'' WHERE ReservaID = 100', 'PERMITIDO';
+EXEC dbo.usp_ProbarComo 'usr_entrenador', N'SELECT TOP 5 SocioID, Nombres, Apellidos FROM personas.Socio', 'PERMITIDO';
+EXEC dbo.usp_ProbarComo 'usr_recepcion',  N'UPDATE personas.Socio SET Telefono = ''7000-0000'' WHERE SocioID = 1', 'PERMITIDO';
+EXEC dbo.usp_ProbarComo 'usr_finanzas',   N'UPDATE finanzas.Pago SET Estado = ''Pagado'' WHERE PagoID = 1', 'PERMITIDO';
+EXEC dbo.usp_ProbarComo 'usr_reportes',   N'SELECT TOP 5 * FROM reportes.vw_OcupacionClases', 'PERMITIDO';   -- encadenamiento de propiedad
+GO
+
+/* ---------- Enmascaramiento dinámico: mismo SELECT, distinta vista según el rol ---------- */
+EXECUTE AS USER = 'usr_recepcion'; SELECT TOP 3 SocioID, Email, Telefono, 'recepcion (UNMASK)' AS Quien FROM personas.Socio; REVERT;
+EXECUTE AS USER = 'usr_finanzas';  SELECT TOP 3 SocioID, Email, Telefono, 'finanzas (enmascarado)' AS Quien FROM personas.Socio; REVERT;
+
+/* ---------- Permisos efectivos de un usuario (para explicar en la defensa) ---------- */
+EXECUTE AS USER = 'usr_entrenador';
+SELECT entity_name, subentity_name, permission_name FROM sys.fn_my_permissions('personas.Socio', 'OBJECT') ORDER BY subentity_name, permission_name;
+REVERT;
+
+/* ---------- Revisar la bitácora DDL ---------- */
+SELECT TOP 20 FechaHora, Usuario, Evento, Objeto FROM auditoria.BitacoraDDL ORDER BY BitacoraID DESC;
+GO
+
+-- >>>>>> COMMIT FINAL: git add sql/04b_pruebas_seguridad.sql && git commit -m "test(seg): pruebas de acceso denegado y enmascaramiento"
+======== FIN DEL CODIGO (sql/04b_pruebas_seguridad.sql) ========
+
+==============================================================================
+COMMITS QUE FALTAN
+==============================================================================
+  git add docs/ && git commit -m "docs(informe): capitulo 4"
+  git add presentacion/ && git commit -m "docs(pres): montaje y ensayo de la presentacion"
+
+==============================================================================
+INFORME - TU CAPITULO (4)
+==============================================================================
+  La matriz y los textos ya estan. Pega CAPTURA 3 y CAPTURA 4 en el recuadro amarillo del 4.3.
+  Compara tu CAPTURA 2 con la tabla 4.1: deben coincidir.
+
+==============================================================================
+DIAPOSITIVAS 3, 4 y 12 - guion
+==============================================================================
+  Diap. 3 (matriz): explicar usuario -> rol -> esquema -> permisos. "Asignamos a ROLES, no a usuarios: si cambia una persona,
+        solo la movemos de rol. Minimo privilegio: cada rol solo lo necesario. DENY prevalece sobre GRANT. REVOKE quita sin denegar."
+  Diap. 4 (reto): hacer el DELETE del paso 3 con lg_entrenador y explicar el error. Luego sys.fn_my_permissions.
+  Diap. 12: tu parte "Seguridad": decision clave = roles + minimo privilegio + columnas + enmascaramiento; evidencia = pruebas 04b OK.
+
+MONTAJE DE LA PRESENTACION (tu responsabilidad)
+  - Reunir las capturas de todos: SELECT1/2/3 (Int. 4), jobs y RTO (Int. 5), dashboard (Int. 2).
+  - Reemplazar los textos [Insertar captura...] por imagenes (Insertar > Imagenes).
+  - Rellenar los [antes] -> [despues] con las cifras del Integrante 4 y [RTO_real] con la del Integrante 5.
+  - Ensayo general: cada integrante presenta SU bloque y responde una pregunta sobre un bloque AJENO. Cronometrar.
+
+==============================================================================
+PREGUNTAS PROBABLES DE DEFENSA
+==============================================================================
+  - Por que roles y no permisos directos? -> Mantenimiento: auditar y dar de baja accesos es mas facil y menos propenso a error.
+  - Que es el minimo privilegio? -> Dar solo los permisos necesarios para la tarea.
+  - Diferencia entre DENY y REVOKE? -> DENY bloquea aunque haya GRANT por otro rol; REVOKE solo retira un GRANT/DENY anterior.
+  - Como puede Power BI leer sin permisos sobre las tablas? -> Encadenamiento de propiedad: vista y tablas tienen el mismo dueno (dbo).
+  - Que hace el enmascaramiento dinamico? -> Muestra datos ofuscados a quien no tiene UNMASK; no cambia el dato guardado.
+
+==============================================================================
+CIERRE - SUBIR TU TRABAJO
+==============================================================================
+  git push -u origin feature/int3-seguridad
+  En GitHub/GitLab: abrir Pull Request  feature/int3-seguridad  ->  develop
+  Revisor asignado: Integrante 2 (debe EJECUTAR tu script en su equipo antes de aprobar).
+  Tu revisas el PR de: Integrante 4.
+  Antes del PR:  git pull --rebase origin develop
+  Para ver tus commits (evidencia para el informe, cap. 9):  git shortlog -sn

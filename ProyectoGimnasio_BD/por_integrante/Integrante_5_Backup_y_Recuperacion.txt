@@ -1,0 +1,564 @@
+==============================================================================
+INTEGRANTE 5 BACKUP Y RECUPERACION - PROYECTO GYMVITAL (ADMINISTRACION DE BD)
+==============================================================================
+REGLAS DEL EQUIPO
+  - Mensajes de commit:  tipo(area): descripcion   (feat, fix, perf, test, docs, chore)
+  - Commits pequenos: uno por cada marca ">>>>>> COMMIT AQUI" que veras dentro del codigo.
+  - Las marcas de commit son COMENTARIOS: puedes pegar todo el codigo tal cual.
+  - SQL Server 2025 + SSMS. Usa un login sysadmin (Windows) para ejecutar.
+  - Las capturas se guardan en  docs/evidencias/intN_nombre.png  (crea la carpeta si no existe).
+  - Todos deben poder explicar y demostrar CUALQUIER bloque en la defensa.
+PASO 0 - PREPARAR GIT (una sola vez)
+  git clone <URL_DEL_REPO>
+  cd ProyectoGimnasio_BD
+  git checkout develop
+  git pull
+  git checkout -b feature/int5-backup
+  (Todo lo que hagas va en ESTA rama. Nunca hagas push a main.)
+
+ROL: Continuidad (respaldo, recuperacion y almacenamiento)
+RUBRICA: Backup y recuperacion (10 pts) + dimensionamiento
+ARCHIVOS: sql/07_dimensionamiento.sql, sql/08_backup_jobs.sql, sql/09_demo_recuperacion.sql
+DIAPOSITIVAS: 9, 10, 11 y tu parte de la 12
+REQUISITO: BD creada y cargada (01-03). SQL Server Agent INICIADO (Services.msc o SSMS: Agent > clic derecho > Iniciar).
+           Crea la carpeta C:\SQLBackups\ (el script crea la subcarpeta). Para la copia externa crea D:\CopiaExterna\
+           (o cambia la ruta en el job; si no tienes otra unidad usa otra carpeta, y dilo en el informe).
+
+==============================================================================
+PASO 1 - Dimensionamiento (script 07)
+==============================================================================
+  Ejecuta DESPUES de cargar datos y crear indices (05 del Integrante 4; si aun no esta, ejecuta igual y repite luego).
+  >>> CAPTURA 1: tamano por tabla (datos / indices / bytes por fila).
+  >>> CAPTURA 2: proyeccion a 12 y 36 meses + estimacion de espacio de backups.
+  Anota los supuestos (factor 1.2, holgura 30%, 24 meses de historia) en el informe 6.1 y justifica con tus numeros.
+
+==============================================================================
+PASO 2 - Respaldos automatizados (script 08)
+==============================================================================
+  Ejecuta completo conectado como sysadmin. Crea: 4 procedimientos, operador, 6 jobs, alertas 823/824/825,
+  y al final hace un primer FULL + LOG manual y ejecuta el monitoreo.
+  RESULTADO ESPERADO: usp_VerificarRespaldos devuelve Estado = OK; se crean archivos .bak y .trn en C:\SQLBackups\GimnasioDB\.
+  >>> CAPTURA 3: SSMS > SQL Server Agent > Jobs (los 6 GimnasioDB_*).
+  >>> CAPTURA 4: consulta A (jobs/horarios/resultado) y B (historial real de msdb).
+  >>> CAPTURA 5: carpeta con los archivos de respaldo.
+  Demo de FALLO real (para la pregunta del docente): ejecuta con una ruta que no existe:
+      EXEC dbo.usp_RespaldarGimnasio @Tipo = 'LOG', @Ruta = N'Z:\NoExiste\';
+  Veras el error y una fila Resultado = ERROR en auditoria.BitacoraBackup (SELECT TOP 5 * FROM auditoria.BitacoraBackup ORDER BY 1 DESC).
+  >>> CAPTURA 6.  Luego ejecuta  EXEC dbo.usp_RespaldarGimnasio @Tipo='LOG';  y  EXEC dbo.usp_VerificarRespaldos;
+  (el monitoreo seguira avisando de errores de las ultimas 24 h: es el comportamiento esperado y se explica en la defensa).
+  Ejecuta manualmente un job: Jobs > clic derecho GimnasioDB_Backup_Diff > Iniciar trabajo en el paso.  (Antes hay un FULL, ya hecho).
+
+==============================================================================
+PASO 3 - Recuperacion point-in-time (script 09)
+==============================================================================
+  Usa una BD de practica (GimnasioDemoDB) para NO romper la cadena de la base real. Ejecuta COMPLETO.
+  RESULTADO ESPERADO:
+   - "Original (tras el desastre)": 0 filas   |   "Restaurada hasta ...": 4 filas (Datos A, B, C y D)
+   - SocioDemo_Recuperados = 2000 (la tabla borrada volvio)
+   - RTO_real_segundos: anota el numero.
+  >>> CAPTURA 7: salida completa.  Esta es la evidencia del RPO/RTO.
+  La seccion 9 final lista la cadena de restauracion de la BD REAL desde msdb (cambia @puntoRecuperacion a la fecha de hoy).
+
+##############################################################################
+# ARCHIVO: sql/07_dimensionamiento.sql
+# Dimensionamiento y proyeccion de almacenamiento
+##############################################################################
+======== INICIO DEL CODIGO (sql/07_dimensionamiento.sql) ========
+/* =====================================================================
+   Archivo : 07_dimensionamiento.sql
+   Responsable: Integrante 5 (Backup, recuperación y almacenamiento)
+   Objetivo: Dimensionamiento y gestión del almacenamiento: medir el tamaño actual,
+             proyectar crecimiento a 12 y 36 meses y estimar espacio de backups.
+   Ejecutar DESPUÉS de cargar los datos (03) y crear los índices (05).
+   ===================================================================== */
+USE GimnasioDB;
+GO
+SET NOCOUNT ON;
+
+/* ---------- 1. Tamaño actual por tabla (filas, datos, índices, bytes por fila) ---------- */
+IF OBJECT_ID('tempdb..#Uso') IS NOT NULL DROP TABLE #Uso;
+SELECT SCHEMA_NAME(t.schema_id) + '.' + t.name AS Tabla,
+       SUM(CASE WHEN ps.index_id IN (0,1) THEN ps.row_count END)                         AS Filas,
+       SUM(CASE WHEN ps.index_id IN (0,1) THEN ps.used_page_count END) * 8 / 1024.0      AS DatosMB,
+       SUM(CASE WHEN ps.index_id > 1      THEN ps.used_page_count END) * 8 / 1024.0      AS IndicesMB,
+       SUM(ps.used_page_count) * 8 / 1024.0                                              AS TotalMB
+INTO #Uso
+FROM sys.tables t
+JOIN sys.dm_db_partition_stats ps ON ps.object_id = t.object_id
+WHERE SCHEMA_NAME(t.schema_id) IN ('personas','operacion','finanzas')
+GROUP BY t.schema_id, t.name;
+
+SELECT Tabla, Filas, CAST(DatosMB AS DECIMAL(10,2)) AS DatosMB, CAST(ISNULL(IndicesMB,0) AS DECIMAL(10,2)) AS IndicesMB,
+       CAST(TotalMB AS DECIMAL(10,2)) AS TotalMB, CAST(DatosMB * 1048576 / NULLIF(Filas,0) AS DECIMAL(10,1)) AS BytesPorFila
+FROM #Uso ORDER BY TotalMB DESC;
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/07_dimensionamiento.sql && git commit -m "feat(sto): tamano actual por tabla"
+/* ---------- 2. Proyección de crecimiento ----------
+   Supuestos (editar y justificar en el informe):
+   - Los datos actuales representan @MesesHistoricos meses de operación.
+   - La actividad crecerá @FactorCrecimiento veces respecto al ritmo histórico (apertura de nuevos socios).
+   - Se agrega @Holgura de seguridad (30 %) para índices nuevos, fragmentación y picos.                    */
+DECLARE @MesesHistoricos INT = 24, @FactorCrecimiento DECIMAL(4,2) = 1.20, @Holgura DECIMAL(4,2) = 1.30;
+DECLARE @ActualMB DECIMAL(12,2) = (SELECT SUM(TotalMB) FROM #Uso);
+DECLARE @MensualMB DECIMAL(12,2) = @ActualMB / @MesesHistoricos * @FactorCrecimiento;
+
+SELECT Horizonte, CAST(ActualMB + MensualMB * Meses AS DECIMAL(12,1))                AS DatosMasIndicesMB,
+       CAST((ActualMB + MensualMB * Meses) * @Holgura AS DECIMAL(12,1))              AS ConHolguraMB,
+       CAST((ActualMB + MensualMB * Meses) * @Holgura * 0.25 AS DECIMAL(12,1))       AS LogRecomendadoMB   -- regla práctica: 25 % de los datos
+FROM (VALUES ('Hoy', 0), ('+12 meses', 12), ('+36 meses', 36)) h(Horizonte, Meses)
+CROSS JOIN (SELECT @ActualMB AS ActualMB, @MensualMB AS MensualMB) x;
+
+/* ---------- 3. Estimación del espacio de BACKUPS en disco ----------
+   Política (ver 08): 4 FULL (semanales) + 6 DIFF + 7 días de LOG cada 15 min.
+   Ratio de compresión medido en msdb tras el primer FULL; si no existe, se asume 0.35.             */
+DECLARE @ratio DECIMAL(5,3) = ISNULL((SELECT TOP 1 CAST(compressed_backup_size * 1.0 / NULLIF(backup_size,0) AS DECIMAL(5,3))
+                                       FROM msdb.dbo.backupset WHERE database_name = N'GimnasioDB' AND type = 'D' ORDER BY backup_finish_date DESC), 0.35);
+SELECT @ratio AS RatioCompresion,
+       CAST(@ActualMB * @ratio AS DECIMAL(10,1))                         AS UnFullMB,
+       CAST(@ActualMB * @ratio * 4 AS DECIMAL(10,1))                     AS CuatroFullsMB,
+       CAST(@ActualMB * @ratio * 0.15 * 6 AS DECIMAL(10,1))              AS SeisDiferencialesMB,   -- ~15 % del FULL por diferencial
+       CAST(@ActualMB * 0.01 * 7 AS DECIMAL(10,1))                       AS LogsSieteDiasMB,       -- ~1 % diario (estimado, medir con BitacoraBackup)
+       CAST(@ActualMB * @ratio * 4 + @ActualMB * @ratio * 0.15 * 6 + @ActualMB * 0.07 AS DECIMAL(10,1)) AS TotalBackupsMB;
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/07_dimensionamiento.sql && git commit -m "feat(sto): proyeccion de crecimiento y espacio de backups"
+/* ---------- 4. Estado actual de los archivos (espacio libre y autocrecimiento) ---------- */
+SELECT f.name AS Archivo, ISNULL(fg.name, 'LOG') AS Filegroup, f.size * 8 / 1024 AS TamanoMB,
+       FILEPROPERTY(f.name, 'SpaceUsed') * 8 / 1024 AS UsadoMB,
+       (f.size - FILEPROPERTY(f.name, 'SpaceUsed')) * 8 / 1024 AS LibreMB,
+       CASE WHEN f.is_percent_growth = 1 THEN CONCAT(f.growth, ' %') ELSE CONCAT(f.growth * 8 / 1024, ' MB') END AS Crecimiento,
+       CASE f.max_size WHEN -1 THEN 'Sin límite' WHEN 0 THEN 'Sin crecimiento' ELSE CONCAT(f.max_size * 8 / 1024, ' MB') END AS MaximoPermitido
+FROM sys.database_files f LEFT JOIN sys.filegroups fg ON fg.data_space_id = f.data_space_id;
+
+DBCC SQLPERF (LOGSPACE);   -- % de uso del log de todas las BD
+
+/* ---------- 5. ¿Está habilitada la inicialización instantánea de archivos (IFI)? ---------- */
+SELECT servicename, instant_file_initialization_enabled FROM sys.dm_server_services;
+GO
+
+/* ---------- 6. Recomendaciones de gestión del almacenamiento (incluir en el informe) ----------
+   1) Pre-dimensionar los archivos al tamaño proyectado a 12 meses: evita autogrowth en horario pico.
+   2) Autogrowth en MB fijos (128 MB datos, 64 MB índices/log), nunca en %.
+   3) Monitorear LibreMB: alertar cuando quede < 20 % libre en cualquier archivo.
+   4) Separar físicamente (discos distintos) FG_DATOS, FG_INDICES, el LOG y la carpeta de BACKUPS.
+   5) Datos históricos (> 24 meses): evaluar particionamiento por fecha o archivado a una BD de histórico.
+   ---------------------------------------------------------------------------------------- */
+
+-- >>>>>> COMMIT FINAL: git add sql/07_dimensionamiento.sql && git commit -m "feat(sto): estado de archivos, IFI y recomendaciones"
+======== FIN DEL CODIGO (sql/07_dimensionamiento.sql) ========
+
+##############################################################################
+# ARCHIVO: sql/08_backup_jobs.sql
+# Respaldo automatizado con SQL Server Agent
+##############################################################################
+======== INICIO DEL CODIGO (sql/08_backup_jobs.sql) ========
+/* =====================================================================
+   Archivo : 08_backup_jobs.sql
+   Responsable: Integrante 5 (Backup y recuperación)
+   Objetivo: Estrategia de respaldo automatizada con SQL Server Agent.
+
+   POLÍTICA PROPUESTA (justificación en el informe):
+   +-----------+--------------------------+--------------------------------+---------------------------+
+   | Tipo      | Frecuencia               | Retención                      | Justificación             |
+   +-----------+--------------------------+--------------------------------+---------------------------+
+   | FULL      | Domingo 02:00            | 4 semanas                      | Base de restauración;     |
+   |           |                          |                                | domingo = menor actividad |
+   | DIFF      | Lunes-Sábado 02:00       | 7 días                         | Acorta la cadena de       |
+   |           |                          |                                | restauración (RTO)        |
+   | LOG       | Cada 15 min (:03,:18...) | 7 días                         | RPO objetivo <= 15 min    |
+   +-----------+--------------------------+--------------------------------+---------------------------+
+   Modelo de recuperación: FULL.  RPO objetivo: 15 min.  RTO objetivo: 60 min.
+   El gimnasio opera de 05:30 a 21:30: la ventana 02:00 no interfiere con reservas ni pagos.
+   Los minutos :03/:18/:33/:48 evitan chocar con los jobs que arrancan en punto.
+   Verificación: CHECKSUM + RESTORE VERIFYONLY en cada backup, job de monitoreo cada 30 min
+   y prueba semanal de restauración con DBCC CHECKDB.
+   Copia fuera del servidor: ROBOCOPY a otra unidad/recurso de red (o BACKUP TO URL en Azure).
+   ===================================================================== */
+USE GimnasioDB;
+GO
+
+/* ---------- 1. Procedimiento de respaldo (con bitácora y manejo de errores) ---------- */
+CREATE OR ALTER PROCEDURE dbo.usp_RespaldarGimnasio
+    @Tipo VARCHAR(4),                                  -- FULL | DIFF | LOG
+    @Ruta NVARCHAR(260) = N'C:\SQLBackups\GimnasioDB\'
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF @Tipo NOT IN ('FULL','DIFF','LOG') THROW 50010, N'Tipo inválido: use FULL, DIFF o LOG.', 1;
+
+    DECLARE @inicio DATETIME2(0) = SYSDATETIME(), @id INT, @archivo NVARCHAR(400),
+            @sello VARCHAR(15) = CONVERT(VARCHAR(8), GETDATE(), 112) + '_' + REPLACE(CONVERT(VARCHAR(8), GETDATE(), 108), ':', '');
+    SET @archivo = @Ruta + N'GimnasioDB_' + @Tipo + N'_' + @sello + CASE @Tipo WHEN 'FULL' THEN N'.bak' WHEN 'DIFF' THEN N'.dif' ELSE N'.trn' END;
+
+    INSERT auditoria.BitacoraBackup (Tipo, Archivo, Inicio, Resultado) VALUES (@Tipo, @archivo, @inicio, 'EJECUTANDO');
+    SET @id = SCOPE_IDENTITY();
+    BEGIN TRY
+        EXEC master.sys.xp_create_subdir @Ruta;
+        IF @Tipo = 'FULL'
+            BACKUP DATABASE GimnasioDB TO DISK = @archivo WITH COMPRESSION, CHECKSUM, INIT, NAME = N'GimnasioDB-FULL', STATS = 10;
+        ELSE IF @Tipo = 'DIFF'
+            BACKUP DATABASE GimnasioDB TO DISK = @archivo WITH DIFFERENTIAL, COMPRESSION, CHECKSUM, INIT, NAME = N'GimnasioDB-DIFF';
+        ELSE
+            BACKUP LOG GimnasioDB TO DISK = @archivo WITH COMPRESSION, CHECKSUM, INIT, NAME = N'GimnasioDB-LOG';
+
+        RESTORE VERIFYONLY FROM DISK = @archivo WITH CHECKSUM;     -- el archivo es legible y consistente
+
+        UPDATE auditoria.BitacoraBackup
+           SET Resultado = 'OK', Fin = SYSDATETIME(),
+               TamanoMB = (SELECT TOP 1 compressed_backup_size / 1048576.0 FROM msdb.dbo.backupset
+                           WHERE database_name = N'GimnasioDB' ORDER BY backup_set_id DESC)
+         WHERE BitacoraID = @id;
+    END TRY
+    BEGIN CATCH
+        UPDATE auditoria.BitacoraBackup SET Resultado = 'ERROR', Fin = SYSDATETIME(), Mensaje = LEFT(ERROR_MESSAGE(), 2000) WHERE BitacoraID = @id;
+        THROW;      -- relanza el error: el paso del Job FALLA y Agent lo registra / notifica
+    END CATCH
+END
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/08_backup_jobs.sql && git commit -m "feat(bkp): procedimiento de respaldo con bitacora y VERIFYONLY"
+/* ---------- 2. Retención: borra respaldos viejos (xp_delete_file es no documentada pero muy usada) ---------- */
+CREATE OR ALTER PROCEDURE dbo.usp_LimpiarRespaldos @Ruta NVARCHAR(260) = N'C:\SQLBackups\GimnasioDB\'
+AS
+BEGIN
+    DECLARE @fFull DATETIME = DATEADD(DAY, -28, GETDATE()), @fDiff DATETIME = DATEADD(DAY, -7, GETDATE()), @fLog DATETIME = DATEADD(DAY, -7, GETDATE());
+    EXEC master.sys.xp_delete_file 0, @Ruta, N'bak', @fFull, 0;
+    EXEC master.sys.xp_delete_file 0, @Ruta, N'dif', @fDiff, 0;
+    EXEC master.sys.xp_delete_file 0, @Ruta, N'trn', @fLog,  0;
+END
+GO
+
+/* ---------- 3. Monitoreo: detecta "el job corrió pero NO hay respaldo bueno" ----------
+   No confía en el estado del job: consulta la evidencia real en msdb.dbo.backupset. */
+CREATE OR ALTER PROCEDURE dbo.usp_VerificarRespaldos
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @ultFull DATETIME, @ultBase DATETIME, @ultLog DATETIME, @err NVARCHAR(1000) = N'';
+    SELECT @ultFull = MAX(CASE WHEN type = 'D' THEN backup_finish_date END),
+           @ultBase = MAX(CASE WHEN type IN ('D','I') THEN backup_finish_date END),
+           @ultLog  = MAX(CASE WHEN type = 'L' THEN backup_finish_date END)
+    FROM msdb.dbo.backupset WHERE database_name = N'GimnasioDB' AND is_copy_only = 0;
+
+    IF @ultLog  IS NULL OR @ultLog  < DATEADD(MINUTE, -45, GETDATE()) SET @err += N'Sin respaldo de LOG en los últimos 45 min. ';
+    IF @ultBase IS NULL OR @ultBase < DATEADD(HOUR,   -26, GETDATE()) SET @err += N'Sin FULL/DIFF en las últimas 26 h. ';
+    IF @ultFull IS NULL OR @ultFull < DATEADD(DAY,     -8, GETDATE()) SET @err += N'Sin FULL en los últimos 8 días. ';
+    IF EXISTS (SELECT 1 FROM auditoria.BitacoraBackup WHERE Resultado = 'ERROR' AND Inicio > DATEADD(HOUR, -24, GETDATE()))
+        SET @err += N'Hay respaldos con ERROR en las últimas 24 h (ver auditoria.BitacoraBackup). ';
+    IF @err <> N'' THROW 50001, @err, 1;      -- hace fallar el job de monitoreo -> alerta al operador
+    SELECT 'OK' AS Estado, @ultFull AS UltimoFull, @ultBase AS UltimoFullODiff, @ultLog AS UltimoLog;
+END
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/08_backup_jobs.sql && git commit -m "feat(bkp): retencion y monitoreo de respaldos"
+/* ---------- 4. Prueba semanal de restauración (evidencia real de RTO e integridad) ---------- */
+CREATE OR ALTER PROCEDURE dbo.usp_ProbarRestauracion
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @archivo NVARCHAR(500), @sql NVARCHAR(MAX), @ini DATETIME2(0) = SYSDATETIME(),
+            @d NVARCHAR(260) = CONVERT(NVARCHAR(260), SERVERPROPERTY('InstanceDefaultDataPath')),
+            @l NVARCHAR(260) = CONVERT(NVARCHAR(260), SERVERPROPERTY('InstanceDefaultLogPath'));
+    SELECT TOP 1 @archivo = mf.physical_device_name
+    FROM msdb.dbo.backupset bs JOIN msdb.dbo.backupmediafamily mf ON mf.media_set_id = bs.media_set_id
+    WHERE bs.database_name = N'GimnasioDB' AND bs.type = 'D' AND bs.is_copy_only = 0 ORDER BY bs.backup_finish_date DESC;
+    IF @archivo IS NULL THROW 50020, N'No existe respaldo FULL para probar.', 1;
+    BEGIN TRY
+        IF DB_ID(N'GimnasioDB_Verif') IS NOT NULL DROP DATABASE GimnasioDB_Verif;
+        SET @sql = N'RESTORE DATABASE GimnasioDB_Verif FROM DISK = N''' + @archivo + N''' WITH CHECKSUM, REPLACE, RECOVERY,
+            MOVE N''GimnasioDB_Primary'' TO N''' + @d + N'GimnasioDB_Verif.mdf'', MOVE N''GimnasioDB_Datos'' TO N''' + @d + N'GimnasioDB_Verif_Datos.ndf'',
+            MOVE N''GimnasioDB_Indices'' TO N''' + @d + N'GimnasioDB_Verif_Indices.ndf'', MOVE N''GimnasioDB_Log'' TO N''' + @l + N'GimnasioDB_Verif.ldf'';';
+        EXEC (@sql);
+        DBCC CHECKDB (GimnasioDB_Verif) WITH NO_INFOMSGS;
+        DROP DATABASE GimnasioDB_Verif;
+        INSERT auditoria.BitacoraBackup (Tipo, Archivo, Inicio, Fin, Resultado, Mensaje)
+        VALUES ('PRUEBA', @archivo, @ini, SYSDATETIME(), 'OK', CONCAT('Restauración + CHECKDB correctos en ', DATEDIFF(SECOND, @ini, SYSDATETIME()), ' s'));
+    END TRY
+    BEGIN CATCH
+        INSERT auditoria.BitacoraBackup (Tipo, Archivo, Inicio, Fin, Resultado, Mensaje) VALUES ('PRUEBA', @archivo, @ini, SYSDATETIME(), 'ERROR', LEFT(ERROR_MESSAGE(), 2000));
+        THROW;
+    END CATCH
+END
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/08_backup_jobs.sql && git commit -m "feat(bkp): prueba semanal de restauracion con CHECKDB"
+/* =====================================================================
+   5. SQL SERVER AGENT: operador, jobs, horarios y alertas
+   (el servicio SQL Server Agent debe estar iniciado y en inicio automático)
+   ===================================================================== */
+USE msdb;
+GO
+/* Operador: requiere Database Mail configurado para que el correo salga realmente.
+   Mientras tanto, @notify_level_eventlog = 2 deja el fallo en el Visor de eventos de Windows. */
+IF NOT EXISTS (SELECT 1 FROM dbo.sysoperators WHERE name = N'DBA_Gimnasio')
+    EXEC dbo.sp_add_operator @name = N'DBA_Gimnasio', @enabled = 1, @email_address = N'dba@gymvital.example';   -- <<< CAMBIAR
+GO
+
+/* Procedimiento local para no repetir código al crear cada job */
+CREATE OR ALTER PROCEDURE dbo.usp_CrearJobGimnasio
+    @Job SYSNAME, @Descripcion NVARCHAR(300), @Paso1 NVARCHAR(100), @Comando1 NVARCHAR(MAX),
+    @Paso2 NVARCHAR(100) = NULL, @Comando2 NVARCHAR(MAX) = NULL, @Subsistema1 NVARCHAR(20) = N'TSQL',
+    @FreqTipo INT, @FreqIntervalo INT, @SubdiaTipo INT = 1, @SubdiaIntervalo INT = 0, @HoraInicio INT, @HoraFin INT = 235959
+AS
+BEGIN
+    DECLARE @bd SYSNAME = CASE WHEN @Subsistema1 = N'TSQL' THEN N'GimnasioDB' END;   -- los pasos CmdExec no usan base de datos
+    IF EXISTS (SELECT 1 FROM dbo.sysjobs WHERE name = @Job) EXEC dbo.sp_delete_job @job_name = @Job, @delete_unused_schedule = 1;
+    EXEC dbo.sp_add_job @job_name = @Job, @description = @Descripcion, @enabled = 1,
+         @notify_level_eventlog = 2, @notify_level_email = 2, @notify_email_operator_name = N'DBA_Gimnasio';   -- 2 = al FALLAR
+    EXEC dbo.sp_add_jobstep @job_name = @Job, @step_id = 1, @step_name = @Paso1, @subsystem = @Subsistema1, @database_name = @bd,
+         @command = @Comando1, @retry_attempts = 1, @retry_interval = 2,
+         @on_success_action = CASE WHEN @Paso2 IS NULL THEN 1 ELSE 3 END, @on_fail_action = 2;
+    IF @Paso2 IS NOT NULL
+        EXEC dbo.sp_add_jobstep @job_name = @Job, @step_id = 2, @step_name = @Paso2, @subsystem = N'TSQL', @database_name = N'GimnasioDB',
+             @command = @Comando2, @on_success_action = 1, @on_fail_action = 2;
+    EXEC dbo.sp_add_jobschedule @job_name = @Job, @name = CONCAT(@Job, N'_Horario'), @enabled = 1,
+         @freq_type = @FreqTipo, @freq_interval = @FreqIntervalo, @freq_recurrence_factor = 1,
+         @freq_subday_type = @SubdiaTipo, @freq_subday_interval = @SubdiaIntervalo,
+         @active_start_time = @HoraInicio, @active_end_time = @HoraFin;
+    EXEC dbo.sp_add_jobserver @job_name = @Job, @server_name = N'(local)';
+END
+GO
+
+-- FULL: domingo 02:00  (freq_type 8 = semanal; interval 1 = domingo)                 + limpieza de retención
+EXEC dbo.usp_CrearJobGimnasio @Job = N'GimnasioDB_Backup_Full', @Descripcion = N'Respaldo completo semanal',
+     @Paso1 = N'Respaldo FULL', @Comando1 = N'EXEC dbo.usp_RespaldarGimnasio @Tipo = ''FULL'';',
+     @Paso2 = N'Limpieza de retencion', @Comando2 = N'EXEC dbo.usp_LimpiarRespaldos;',
+     @FreqTipo = 8, @FreqIntervalo = 1, @HoraInicio = 20000;
+
+-- DIFERENCIAL: lunes a sábado 02:00 (interval 126 = 2+4+8+16+32+64 = Lun..Sáb)
+EXEC dbo.usp_CrearJobGimnasio @Job = N'GimnasioDB_Backup_Diff', @Descripcion = N'Respaldo diferencial diario',
+     @Paso1 = N'Respaldo DIFF', @Comando1 = N'EXEC dbo.usp_RespaldarGimnasio @Tipo = ''DIFF'';',
+     @FreqTipo = 8, @FreqIntervalo = 126, @HoraInicio = 20000;
+
+-- LOG: cada 15 min a partir de 00:03  (freq_type 4 = diario; subday 4 = minutos)
+EXEC dbo.usp_CrearJobGimnasio @Job = N'GimnasioDB_Backup_Log', @Descripcion = N'Respaldo del log de transacciones cada 15 min',
+     @Paso1 = N'Respaldo LOG', @Comando1 = N'EXEC dbo.usp_RespaldarGimnasio @Tipo = ''LOG'';',
+     @FreqTipo = 4, @FreqIntervalo = 1, @SubdiaTipo = 4, @SubdiaIntervalo = 15, @HoraInicio = 300;
+
+-- MONITOREO: cada 30 min verifica evidencia real de respaldos (falla -> alerta)
+EXEC dbo.usp_CrearJobGimnasio @Job = N'GimnasioDB_Monitor_Backups', @Descripcion = N'Verifica que existan respaldos recientes y válidos',
+     @Paso1 = N'Verificar respaldos', @Comando1 = N'EXEC dbo.usp_VerificarRespaldos;',
+     @FreqTipo = 4, @FreqIntervalo = 1, @SubdiaTipo = 4, @SubdiaIntervalo = 30, @HoraInicio = 1000;
+
+-- COPIA FUERA DEL SERVIDOR: cada 30 min. Paso CmdExec (corre con la cuenta de Agent: darle permiso a la carpeta destino).
+-- ROBOCOPY devuelve 0-7 = éxito y >= 8 = error; la condición convierte 0-7 en código de salida 0 para Agent.
+EXEC dbo.usp_CrearJobGimnasio @Job = N'GimnasioDB_Copia_Externa', @Descripcion = N'Copia de respaldos a unidad/recurso externo',
+     @Paso1 = N'Robocopy', @Subsistema1 = N'CmdExec',
+     @Comando1 = N'robocopy "C:\SQLBackups\GimnasioDB" "D:\CopiaExterna\GimnasioDB" /E /XO /R:2 /W:5 & IF %ERRORLEVEL% LSS 8 EXIT /B 0',
+     @FreqTipo = 4, @FreqIntervalo = 1, @SubdiaTipo = 4, @SubdiaIntervalo = 30, @HoraInicio = 800;
+/* Alternativa en la nube: BACKUP DATABASE GimnasioDB TO URL = 'https://<cuenta>.blob.core.windows.net/<contenedor>/GimnasioDB.bak' WITH CREDENTIAL = '...' */
+
+-- PRUEBA DE RESTAURACIÓN: domingo 04:00 (después del FULL de las 02:00)
+EXEC dbo.usp_CrearJobGimnasio @Job = N'GimnasioDB_Prueba_Restauracion', @Descripcion = N'Restaura el último FULL en GimnasioDB_Verif y ejecuta DBCC CHECKDB',
+     @Paso1 = N'Restaurar y verificar', @Comando1 = N'EXEC dbo.usp_ProbarRestauracion;',
+     @FreqTipo = 8, @FreqIntervalo = 1, @HoraInicio = 40000;
+GO
+DROP PROCEDURE dbo.usp_CrearJobGimnasio;
+GO
+
+/* ---------- Alertas por errores de E/S / corrupción (823, 824, 825) ---------- */
+DECLARE @n INT, @nombre SYSNAME;
+DECLARE @errores TABLE (Num INT);
+INSERT @errores VALUES (823), (824), (825);
+DECLARE c CURSOR LOCAL FAST_FORWARD FOR SELECT Num FROM @errores;
+OPEN c; FETCH NEXT FROM c INTO @n;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    SET @nombre = CONCAT(N'GimnasioDB - Error ', @n, N' (corrupcion / E/S)');
+    IF EXISTS (SELECT 1 FROM dbo.sysalerts WHERE name = @nombre) EXEC dbo.sp_delete_alert @name = @nombre;
+    EXEC dbo.sp_add_alert @name = @nombre, @message_id = @n, @severity = 0, @enabled = 1, @delay_between_responses = 300,
+         @include_event_description_in = 1, @database_name = N'GimnasioDB';
+    EXEC dbo.sp_add_notification @alert_name = @nombre, @operator_name = N'DBA_Gimnasio', @notification_method = 1;  -- 1 = correo
+    FETCH NEXT FROM c INTO @n;
+END
+CLOSE c; DEALLOCATE c;
+GO
+
+/* ---------- Primer ciclo manual (para tener la base de la cadena y evidencias) ---------- */
+USE GimnasioDB;
+GO
+EXEC dbo.usp_RespaldarGimnasio @Tipo = 'FULL';
+EXEC dbo.usp_RespaldarGimnasio @Tipo = 'LOG';
+EXEC dbo.usp_VerificarRespaldos;
+GO
+
+/* ---------- EVIDENCIA PARA EL INFORME / DEFENSA ---------- */
+-- A) Jobs configurados, horarios y estado del último resultado
+SELECT j.name AS Job, j.enabled AS Habilitado, s.name AS Horario,
+       CASE jh.run_status WHEN 1 THEN 'Correcto' WHEN 0 THEN 'FALLIDO' WHEN 2 THEN 'Reintento' WHEN 3 THEN 'Cancelado' ELSE 'Sin ejecutar' END AS UltimoResultado,
+       jh.run_date AS Fecha, jh.run_time AS Hora, jh.message AS Mensaje
+FROM msdb.dbo.sysjobs j
+LEFT JOIN msdb.dbo.sysjobschedules js ON js.job_id = j.job_id
+LEFT JOIN msdb.dbo.sysschedules s ON s.schedule_id = js.schedule_id
+OUTER APPLY (SELECT TOP 1 * FROM msdb.dbo.sysjobhistory h WHERE h.job_id = j.job_id AND h.step_id = 0 ORDER BY h.instance_id DESC) jh
+WHERE j.name LIKE 'GimnasioDB_%';
+
+-- B) Historial de respaldos reales (de msdb)
+SELECT TOP 30 bs.backup_finish_date AS Fin, CASE bs.type WHEN 'D' THEN 'FULL' WHEN 'I' THEN 'DIFF' WHEN 'L' THEN 'LOG' END AS Tipo,
+       CAST(bs.compressed_backup_size / 1048576.0 AS DECIMAL(10,2)) AS ComprimidoMB, bs.recovery_model AS Modelo, mf.physical_device_name AS Archivo
+FROM msdb.dbo.backupset bs JOIN msdb.dbo.backupmediafamily mf ON mf.media_set_id = bs.media_set_id
+WHERE bs.database_name = N'GimnasioDB' ORDER BY bs.backup_finish_date DESC;
+
+-- C) Bitácora propia
+SELECT TOP 30 * FROM auditoria.BitacoraBackup ORDER BY BitacoraID DESC;
+GO
+
+-- >>>>>> COMMIT FINAL: git add sql/08_backup_jobs.sql && git commit -m "feat(bkp): jobs FULL/DIFF/LOG, alertas y primer ciclo de respaldo"
+======== FIN DEL CODIGO (sql/08_backup_jobs.sql) ========
+
+##############################################################################
+# ARCHIVO: sql/09_demo_recuperacion.sql
+# Demostracion de recuperacion point-in-time con tail-log
+##############################################################################
+======== INICIO DEL CODIGO (sql/09_demo_recuperacion.sql) ========
+/* =====================================================================
+   Archivo : 09_demo_recuperacion.sql
+   Responsable: Integrante 5 (Backup y recuperación)
+   Objetivo: Demostrar paso a paso la RECUPERACIÓN POINT-IN-TIME con FULL + DIFF + LOG + TAIL-LOG,
+             restaurando en una base ALTERNATIVA sin tocar la original (reto de la diapositiva 11).
+   Se usa una BD de práctica (GimnasioDemoDB) para NO romper la cadena de backups de GimnasioDB.
+
+   ESCENARIO (adaptado a nuestra política):
+     FULL: domingo 02:00 | DIFF: hoy 02:00 | LOG: cada 15 min (último a las 11:18) | FALLO: 11:20
+     RPO objetivo = 15 min  -> con el último LOG programado se pierden como máximo 15 min;
+                               con TAIL-LOG BACKUP (si el archivo .ldf sigue accesible) la pérdida es ~0.
+     RTO objetivo = 60 min  -> tiempo medido más abajo (RTO_real) + tiempo de decisión/coordinación.
+   ===================================================================== */
+USE master;
+GO
+IF DB_ID(N'GimnasioDemoDB_Restore') IS NOT NULL DROP DATABASE GimnasioDemoDB_Restore;
+IF DB_ID(N'GimnasioDemoDB') IS NOT NULL BEGIN ALTER DATABASE GimnasioDemoDB SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE GimnasioDemoDB; END
+CREATE DATABASE GimnasioDemoDB;
+ALTER DATABASE GimnasioDemoDB SET RECOVERY FULL;
+GO
+USE GimnasioDemoDB;
+GO
+SELECT TOP (2000) SocioID, Nombres, Apellidos, Estado INTO dbo.SocioDemo FROM GimnasioDB.personas.Socio ORDER BY SocioID;   -- datos reales de ejemplo
+CREATE TABLE dbo.EventoDemo (ID INT IDENTITY PRIMARY KEY, Evento NVARCHAR(100) NOT NULL, Fecha DATETIME2(3) NOT NULL DEFAULT SYSDATETIME());
+GO
+
+SET NOCOUNT ON;
+DECLARE @r NVARCHAR(260) = N'C:\SQLBackups\GimnasioDemo\';
+DECLARE @full NVARCHAR(300) = @r + N'demo_full.bak', @dif NVARCHAR(300) = @r + N'demo_diff.dif',
+        @log1 NVARCHAR(300) = @r + N'demo_log1.trn',  @tail NVARCHAR(300) = @r + N'demo_tail.trn';
+DECLARE @d NVARCHAR(260) = CONVERT(NVARCHAR(260), SERVERPROPERTY('InstanceDefaultDataPath')),
+        @l NVARCHAR(260) = CONVERT(NVARCHAR(260), SERVERPROPERTY('InstanceDefaultLogPath'));
+DECLARE @stop DATETIME, @sql NVARCHAR(MAX), @mv NVARCHAR(MAX), @t0 DATETIME2(3), @t1 DATETIME2(3);
+EXEC master.sys.xp_create_subdir @r;
+
+/* 1) Domingo 02:00 -> FULL */
+INSERT dbo.EventoDemo (Evento) VALUES (N'Dato A - existía antes del FULL');
+BACKUP DATABASE GimnasioDemoDB TO DISK = @full WITH INIT, CHECKSUM, COMPRESSION, NAME = N'demo-full';
+/* 2) Hoy 02:00 -> DIFERENCIAL */
+INSERT dbo.EventoDemo (Evento) VALUES (N'Dato B - entra después del FULL, cubierto por el DIFF');
+BACKUP DATABASE GimnasioDemoDB TO DISK = @dif WITH DIFFERENTIAL, INIT, CHECKSUM, COMPRESSION, NAME = N'demo-diff';
+/* 3) 11:18 -> LOG */
+INSERT dbo.EventoDemo (Evento) VALUES (N'Dato C - cubierto por el LOG de las 11:18');
+BACKUP LOG GimnasioDemoDB TO DISK = @log1 WITH INIT, CHECKSUM, COMPRESSION, NAME = N'demo-log1';
+/* 4) 11:19 -> datos que SÓLO se recuperan con TAIL-LOG (aún no hay backup que los cubra) */
+INSERT dbo.EventoDemo (Evento) VALUES (N'Dato D - sólo recuperable con tail-log');
+WAITFOR DELAY '00:00:02';
+SET @stop = GETDATE();                       -- <<< punto en el tiempo al que queremos volver (justo antes del error)
+WAITFOR DELAY '00:00:02';
+
+/* 5) 11:20 -> DESASTRE: borrado accidental (o fallo de disco) */
+DELETE FROM dbo.EventoDemo;
+DROP TABLE dbo.SocioDemo;
+PRINT 'DESASTRE simulado: tabla vaciada y SocioDemo eliminada.';
+
+/* 6) TAIL-LOG BACKUP: captura lo ocurrido desde el último LOG hasta el fallo.
+      NO_TRUNCATE permite hacerlo aunque la BD esté dañada (mientras el .ldf sea legible). */
+BACKUP LOG GimnasioDemoDB TO DISK = @tail WITH NO_TRUNCATE, INIT, CHECKSUM, NAME = N'demo-tail';
+
+/* 7) RESTAURAR EN BASE ALTERNATIVA (la original no se toca) */
+SET @t0 = SYSDATETIME();
+SET @mv = N'MOVE N''GimnasioDemoDB'' TO N''' + @d + N'GimnasioDemoDB_Restore.mdf'', MOVE N''GimnasioDemoDB_log'' TO N''' + @l + N'GimnasioDemoDB_Restore.ldf''';
+SET @sql = N'RESTORE DATABASE GimnasioDemoDB_Restore FROM DISK = N''' + @full + N''' WITH ' + @mv + N', NORECOVERY, REPLACE, CHECKSUM;'; EXEC (@sql);
+SET @sql = N'RESTORE DATABASE GimnasioDemoDB_Restore FROM DISK = N''' + @dif  + N''' WITH NORECOVERY, CHECKSUM;';  EXEC (@sql);
+SET @sql = N'RESTORE LOG GimnasioDemoDB_Restore FROM DISK = N''' + @log1 + N''' WITH NORECOVERY, CHECKSUM;';       EXEC (@sql);
+SET @sql = N'RESTORE LOG GimnasioDemoDB_Restore FROM DISK = N''' + @tail + N''' WITH STOPAT = ''' + CONVERT(NVARCHAR(30), @stop, 126) + N''', RECOVERY, CHECKSUM;'; EXEC (@sql);
+SET @t1 = SYSDATETIME();
+
+/* 8) EVIDENCIA */
+SELECT 'Original (tras el desastre)' AS Base, COUNT(*) AS Filas FROM GimnasioDemoDB.dbo.EventoDemo
+UNION ALL SELECT 'Restaurada hasta ' + CONVERT(VARCHAR(23), @stop, 121), COUNT(*) FROM GimnasioDemoDB_Restore.dbo.EventoDemo;
+SELECT * FROM GimnasioDemoDB_Restore.dbo.EventoDemo ORDER BY ID;               -- deben verse A, B, C y D
+SELECT COUNT(*) AS SocioDemo_Recuperados FROM GimnasioDemoDB_Restore.dbo.SocioDemo;  -- la tabla "borrada" volvió
+SELECT DATEDIFF(MILLISECOND, @t0, @t1) / 1000.0 AS RTO_real_segundos;
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/09_demo_recuperacion.sql && git commit -m "feat(rec): demo point-in-time con tail-log en base alternativa"
+/* =====================================================================
+   9) PARA LA BD REAL: construir la cadena de restauración desde el historial de msdb
+   (qué FULL, qué DIFF y qué LOGs se necesitan para llegar a una hora determinada)
+   ===================================================================== */
+DECLARE @puntoRecuperacion DATETIME = '20260630 11:20';      -- <<< hora del fallo / punto deseado
+;WITH Ultimo_Full AS (
+    SELECT TOP 1 backup_set_id, backup_finish_date, database_backup_lsn FROM msdb.dbo.backupset
+    WHERE database_name = N'GimnasioDB' AND type = 'D' AND is_copy_only = 0 AND backup_finish_date <= @puntoRecuperacion ORDER BY backup_finish_date DESC),
+Ultimo_Diff AS (
+    SELECT TOP 1 bs.backup_set_id, bs.backup_finish_date FROM msdb.dbo.backupset bs CROSS JOIN Ultimo_Full f
+    WHERE bs.database_name = N'GimnasioDB' AND bs.type = 'I' AND bs.backup_finish_date > f.backup_finish_date AND bs.backup_finish_date <= @puntoRecuperacion
+    ORDER BY bs.backup_finish_date DESC)
+SELECT Paso = ROW_NUMBER() OVER (ORDER BY bs.backup_finish_date), CASE bs.type WHEN 'D' THEN 'RESTORE FULL' WHEN 'I' THEN 'RESTORE DIFF' ELSE 'RESTORE LOG' END AS Operacion,
+       bs.backup_finish_date AS Fin, mf.physical_device_name AS Archivo
+FROM msdb.dbo.backupset bs
+JOIN msdb.dbo.backupmediafamily mf ON mf.media_set_id = bs.media_set_id
+WHERE bs.database_name = N'GimnasioDB'
+  AND ( bs.backup_set_id IN (SELECT backup_set_id FROM Ultimo_Full)
+     OR bs.backup_set_id IN (SELECT backup_set_id FROM Ultimo_Diff)
+     OR (bs.type = 'L' AND bs.backup_finish_date > COALESCE((SELECT backup_finish_date FROM Ultimo_Diff), (SELECT backup_finish_date FROM Ultimo_Full))) )
+ORDER BY bs.backup_finish_date;
+GO
+
+/* Limpieza de la demo (opcional)
+USE master; DROP DATABASE IF EXISTS GimnasioDemoDB_Restore; DROP DATABASE IF EXISTS GimnasioDemoDB;
+*/
+
+-- >>>>>> COMMIT FINAL: git add sql/09_demo_recuperacion.sql && git commit -m "feat(rec): cadena de restauracion desde msdb"
+======== FIN DEL CODIGO (sql/09_demo_recuperacion.sql) ========
+
+==============================================================================
+COMMITS QUE FALTAN
+==============================================================================
+  git add docs/ && git commit -m "docs(bkp): analisis RPO/RTO"
+  git add docs/ && git commit -m "docs(informe): capitulo 6"
+
+==============================================================================
+INFORME - TU CAPITULO (6)
+==============================================================================
+  6.1: pegar CAPTURA 1 y 2.   6.3: pegar CAPTURA 3, 4 y 5.   6.4: llenar la tabla con RTO_real_segundos (CAPTURA 7)
+  y el tiempo de CHECKDB (mira auditoria.BitacoraBackup, tipo PRUEBA, tras ejecutar:  EXEC dbo.usp_ProbarRestauracion;).
+  Importante: la prueba de restauracion necesita un FULL previo (ya existe tras el script 08).
+
+==============================================================================
+DIAPOSITIVAS 9, 10, 11 y 12 - guion
+==============================================================================
+  Diap. 9: tabla de la estrategia + justificacion (por que 02:00, por que log cada 15 min = RPO 15, modelo FULL, copia externa).
+  Diap. 10 (demo en vivo): mostrar jobs, pasos, horarios, historial y ultimo resultado.  Cambiar ESTADO a Correcto/Fallido real.
+    PREGUNTA DEL DOCENTE ("el job corrio pero el respaldo fallo"): "No confiamos en el estado del job. El job de monitoreo consulta
+      msdb.dbo.backupset y falla si no hay LOG en 45 min, ni FULL/DIFF en 26 h. Ademas el procedimiento hace THROW y deja el error en
+      auditoria.BitacoraBackup, el operador recibe alerta. Revisariamos historial, espacio en disco y permisos, repetiriamos el respaldo y,
+      si hay hueco en la cadena de log, tomariamos un nuevo FULL."
+  Diap. 11 (RPO y RTO): fallo 11:20; ultimo LOG 11:18. Con tail-log perdida ~0; sin el, maximo ~2 min (objetivo 15). RTO medido: [tu cifra] s.
+    RETO: ejecutar el script 09 en vivo (restaura en base alternativa sin tocar la original).
+  Diap. 12 (recuperacion): capacidad real y limites (sin alta disponibilidad; la copia externa depende del entorno).
+
+==============================================================================
+PREGUNTAS PROBABLES DE DEFENSA
+==============================================================================
+  - Por que modelo FULL? -> Permite respaldar el log y restaurar a un punto en el tiempo; SIMPLE no lo permite.
+  - Que es un tail-log backup? -> Respaldo del final del log antes de restaurar; captura lo ocurrido desde el ultimo LOG hasta el fallo.
+  - Diferencia entre RPO y RTO? -> RPO = cuantos datos podemos perder; RTO = cuanto tiempo podemos estar caidos.
+  - Que se restaura y en que orden? -> FULL NORECOVERY, DIFF NORECOVERY, LOGs NORECOVERY, ultimo LOG con STOPAT y RECOVERY.
+  - Para que CHECKSUM y VERIFYONLY? -> Detectan corrupcion y confirman que el archivo es legible; pero la prueba real es restaurar (job semanal).
+  - Por que el DIFF? -> Acorta la cadena de restauracion, mejora el RTO.
+
+==============================================================================
+CIERRE - SUBIR TU TRABAJO
+==============================================================================
+  git push -u origin feature/int5-backup
+  En GitHub/GitLab: abrir Pull Request  feature/int5-backup  ->  develop
+  Revisor asignado: Integrante 4 (debe EJECUTAR tu script en su equipo antes de aprobar).
+  Tu revisas el PR de: Integrante 1.
+  Antes del PR:  git pull --rebase origin develop
+  Para ver tus commits (evidencia para el informe, cap. 9):  git shortlog -sn

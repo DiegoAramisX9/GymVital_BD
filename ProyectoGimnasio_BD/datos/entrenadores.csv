@@ -1,0 +1,21 @@
+entrenador_id,nombres,apellidos,email,especialidad,fecha_contratacion,activo
+1,Miguel,Rivera Guzmán,miguel.rivera1@gymvital.sv,Spinning,2022-04-03,1
+2,Ingrid,Cárcamo Cárcamo,ingrid.carcamo2@gymvital.sv,Boxeo,2024-03-18,1
+3,Carmen,Calderón Reyes,carmen.calderon3@gymvital.sv,HIIT,2023-06-23,1
+4,Mauricio,Hernández Cárcamo,mauricio.hernandez4@gymvital.sv,Spinning,2021-08-15,1
+5,Fernando,Calderón García,fernando.calderon5@gymvital.sv,HIIT,2021-01-24,1
+6,Claudia,Ortiz Portillo,claudia.ortiz6@gymvital.sv,Funcional,2022-03-07,1
+7,Diego,Ramírez Mejía,diego.ramirez7@gymvital.sv,Funcional,2023-02-10,1
+8,Patricia,Guzmán Quintanilla,patricia.guzman8@gymvital.sv,Spinning,2022-11-29,1
+9,Luis,Menjívar Menjívar,luis.menjivar9@gymvital.sv,Pilates,2022-08-13,1
+10,Mario,Rodríguez Quintanilla,mario.rodriguez10@gymvital.sv,Pilates,2021-02-20,1
+11,Wendy,Castillo Mejía,wendy.castillo11@gymvital.sv,Funcional,2023-08-03,1
+12,Andrés,López Villalta,andres.lopez12@gymvital.sv,HIIT,2021-08-27,1
+13,Andrés,Guzmán Chávez,andres.guzman13@gymvital.sv,HIIT,2023-03-27,1
+14,Rosa,Guzmán Ramírez,rosa.guzman14@gymvital.sv,Boxeo,2024-03-01,1
+15,Rosa,Portillo Guzmán,rosa.portillo15@gymvital.sv,Yoga,2024-03-24,1
+16,Mauricio,Molina Rodríguez,mauricio.molina16@gymvital.sv,Yoga,2023-12-08,1
+17,Ingrid,Ortiz García,ingrid.ortiz17@gymvital.sv,Boxeo,2023-08-21,1
+18,Juan,Portillo Flores,juan.portillo18@gymvital.sv,Spinning,2023-07-25,1
+19,Gabriela,Portillo Castillo,gabriela.portillo19@gymvital.sv,Pilates,2024-02-21,1
+20,Diego,Ortiz Cruz,diego.ortiz20@gymvital.sv,HIIT,2023-04-04,1

@@ -1,0 +1,610 @@
+==============================================================================
+INTEGRANTE 2 DATOS Y POWERBI - PROYECTO GYMVITAL (ADMINISTRACION DE BD)
+==============================================================================
+REGLAS DEL EQUIPO
+  - Mensajes de commit:  tipo(area): descripcion   (feat, fix, perf, test, docs, chore)
+  - Commits pequenos: uno por cada marca ">>>>>> COMMIT AQUI" que veras dentro del codigo.
+  - Las marcas de commit son COMENTARIOS: puedes pegar todo el codigo tal cual.
+  - SQL Server 2025 + SSMS. Usa un login sysadmin (Windows) para ejecutar.
+  - Las capturas se guardan en  docs/evidencias/intN_nombre.png  (crea la carpeta si no existe).
+  - Todos deben poder explicar y demostrar CUALQUIER bloque en la defensa.
+PASO 0 - PREPARAR GIT (una sola vez)
+  git clone <URL_DEL_REPO>
+  cd ProyectoGimnasio_BD
+  git checkout develop
+  git pull
+  git checkout -b feature/int2-datos-bi
+  (Todo lo que hagas va en ESTA rama. Nunca hagas push a main.)
+
+ROL: Datos y BI (carga de datos + dashboard Power BI)
+RUBRICA: Migracion/carga (5 pts) + Dashboard Power BI (15 pts)  -> es el bloque mas pesado; Integrante 1 te apoya.
+ARCHIVOS: datos/generar_datos.py, sql/03_carga_datos.sql, sql/06_vistas_powerbi.sql, powerbi/GymVital.pbix
+DIAPOSITIVA: 8
+REQUISITO: que el Integrante 1 ya haya hecho merge de 01 y 02 (ejecutalos tu tambien en tu equipo).
+
+==============================================================================
+PASO 1 - Generar los CSV
+==============================================================================
+ 1.1 Crea datos/generar_datos.py y pega el codigo de abajo (necesitas Python 3, no requiere librerias extra).
+ 1.2 Ejecuta:   python datos/generar_datos.py
+     RESULTADO ESPERADO (cifras exactas):  socios 6000 | suscripciones 38184 | pagos 38184 | sesiones 6886 | reservas 123619
+ 1.3 Copia la carpeta datos a  C:\ProyectoGimnasio\datos\   (o cambia @Ruta en el script 03).
+     La cuenta del servicio de SQL Server necesita permiso de LECTURA en esa carpeta
+     (Propiedades > Seguridad > agregar "NT SERVICE\MSSQLSERVER").
+ 1.4 Commit marcado en el codigo.
+
+==============================================================================
+PASO 2 - Cargar los datos (script 03)
+==============================================================================
+ Ejecuta 03 completo en SSMS (dentro de GimnasioDB, despues de 01 y 02).
+ RESULTADO ESPERADO en Fase 4:
+   - LogCarga: Pago leidas 38184 = 38128 insertadas + 56 rechazadas ; Socio 6000 insertados con 31 advertencias
+   - Todas las filas con Conciliacion = OK
+   - Integridad referencial: 3 filas con 0 huerfanas
+   - Perfilado: Socios 6000, Entrenadores 20, Sesiones 6886, Reservas 123619, Suscripciones 38184, Pagos 38128
+ >>> CAPTURA 1: LogCarga + Rechazo (informe 3.2).   >>> CAPTURA 2: perfilado/integridad.
+ Si BULK INSERT falla con "Cannot bulk load": revisa la ruta y el permiso de lectura (paso 1.3).
+
+==============================================================================
+PASO 3 - Vistas y dashboard
+==============================================================================
+ 3.1 Espera a que el Integrante 3 haga merge de 04_seguridad (crea lg_reportes) y el Integrante 4 de 05 (indices).
+     (puedes crear las vistas antes; solo el usuario lg_reportes requiere 04.)
+ 3.2 Ejecuta el script 06. Al final aparece la prueba "vista vs. consulta base": ValorVista debe ser IGUAL a ValorBase
+     en las 2 filas.  >>> CAPTURA 3 (informe cap. 7 y diapositiva 8: "coinciden los resultados").
+ 3.3 Abre Power BI Desktop y sigue powerbi/GUIA_POWERBI.md (copiada abajo).
+     Guarda como powerbi/GymVital.pbix.  >>> CAPTURA 4: dashboard completo con los 3 graficos.
+ 3.4 Prepara la demo "como se actualiza": cambia un dato en SQL (ej. un UPDATE de un pago a otro plan),
+     pulsa Actualizar en Power BI y muestra que el grafico cambia.  Luego revierte el cambio.
+
+##############################################################################
+# ARCHIVO: datos/generar_datos.py
+# Generador de datos (semilla fija = siempre los mismos datos)
+##############################################################################
+======== INICIO DEL CODIGO (datos/generar_datos.py) ========
+#!/usr/bin/env python3
+"""
+Generador de datos sintéticos - GimnasioDB   (Responsable: Integrante 2)
+Produce los CSV que consume sql/03_carga_datos.sql (BULK INSERT).
+Semilla fija => resultados reproducibles.   Uso:  python generar_datos.py
+Incluye "suciedad" controlada en socios.csv y pagos.csv para demostrar la
+limpieza/validación del proceso de migración (ETL).
+"""
+import csv, random, os
+from datetime import date, datetime, timedelta
+
+random.seed(2026)
+OUT = os.path.dirname(os.path.abspath(__file__))
+N_SOCIOS = 6000
+INI, FIN = date(2024, 7, 1), date(2026, 6, 30)
+
+
+def w(nombre, cab, filas):
+    with open(os.path.join(OUT, nombre), "w", newline="", encoding="utf-8") as f:
+        wr = csv.writer(f, lineterminator="\n")
+        wr.writerow(cab)
+        wr.writerows(filas)
+    print(f"{nombre:<22}{len(filas):>9} filas")
+
+
+def quitar_tildes(s):
+    for x, y in zip("áéíóúÁÉÍÓÚñÑ", "aeiouAEIOUnN"):
+        s = s.replace(x, y)
+    return s
+
+
+def add_months(d, m):
+    y, mm = divmod(d.month - 1 + m, 12)
+    return date(d.year + y, mm + 1, 1)
+
+
+NOMBRES = ["José", "Carlos", "Luis", "Miguel", "Juan", "Kevin", "Walter", "Mauricio", "Roberto", "Fernando",
+           "Oscar", "Jorge", "Diego", "Andrés", "Mario", "María", "Ana", "Carmen", "Sofía", "Daniela",
+           "Karla", "Gabriela", "Lucía", "Patricia", "Verónica", "Alejandra", "Claudia", "Wendy", "Ingrid", "Rosa"]
+APELLIDOS = ["Hernández", "Martínez", "López", "García", "Rodríguez", "Pérez", "Gómez", "Flores", "Ramírez", "Cruz",
+             "Rivera", "Mejía", "Villalta", "Alvarado", "Escobar", "Portillo", "Guzmán", "Menjívar", "Aguilar",
+             "Cárcamo", "Quintanilla", "Ortiz", "Castillo", "Reyes", "Molina", "Chávez", "Calderón", "Rauda"]
+
+# ------------------------------------------------------------------ catálogos
+planes = [(1, "Básico Mensual", "25.00", 1, "Acceso a sala de pesas"),
+          (2, "Estándar Mensual", "40.00", 1, "Sala + clases grupales"),
+          (3, "Premium Mensual", "60.00", 1, "Todo incluido + entrenador"),
+          (4, "Estándar Trimestral", "108.00", 3, "Sala + clases, 10% descuento")]
+w("planes.csv", ["plan_id", "nombre", "precio", "duracion_meses", "descripcion"], planes)
+
+tipos = [(1, "Yoga", 60, "Baja"), (2, "Spinning", 45, "Media"), (3, "Zumba", 50, "Media"), (4, "CrossFit", 60, "Alta"),
+         (5, "Pilates", 55, "Baja"), (6, "Funcional", 45, "Media"), (7, "Boxeo", 60, "Alta"), (8, "HIIT", 30, "Alta"),
+         (9, "Stretching", 40, "Baja"), (10, "GAP", 45, "Media"), (11, "Baile Latino", 50, "Media"),
+         (12, "Movilidad", 40, "Baja")]
+w("tipos_clase.csv", ["tipo_clase_id", "nombre", "duracion_min", "intensidad"], tipos)
+
+salas = [(1, "Sala Spinning", 30), (2, "Sala Funcional", 25), (3, "Estudio Yoga", 20),
+         (4, "Sala Baile", 40), (5, "Box Zone", 20), (6, "Sala Multiuso", 15)]
+w("salas.csv", ["sala_id", "nombre", "capacidad"], salas)
+
+espec = ["Yoga", "Spinning", "Zumba", "CrossFit", "Pilates", "Funcional", "Boxeo", "HIIT"]
+entren = []
+for i in range(1, 21):
+    n, a = random.choice(NOMBRES), random.choice(APELLIDOS) + " " + random.choice(APELLIDOS)
+    mail = quitar_tildes(f"{n}.{a.split()[0]}{i}@gymvital.sv").lower()
+    entren.append((i, n, a, mail, random.choice(espec),
+                   (date(2021, 1, 1) + timedelta(days=random.randint(0, 1200))).isoformat(), 1))
+w("entrenadores.csv", ["entrenador_id", "nombres", "apellidos", "email", "especialidad", "fecha_contratacion", "activo"],
+  entren)
+
+# >>>>>> COMMIT AQUI (todo lo anterior): git add datos/ && git commit -m "feat(datos): catalogos para el generador de CSV"
+# ------------------------------------------------------ socios, suscripciones, pagos
+socios, susc, pagos = [], [], []
+susc_id = pago_id = 0
+activo_en = {}  # (año, mes) -> [socio_id]  (para generar reservas coherentes)
+PESOS_PLAN = [0.30, 0.38, 0.17, 0.15]
+
+for sid in range(1, N_SOCIOS + 1):
+    mes_alta = int((random.random() ** 1.4) * 23)
+    alta = add_months(INI, mes_alta) + timedelta(days=random.randint(0, 27))
+    n, a = random.choice(NOMBRES), random.choice(APELLIDOS) + " " + random.choice(APELLIDOS)
+    nac_txt = (date(1960, 1, 1) + timedelta(days=random.randint(0, 365 * 42))).isoformat()
+    sexo = random.choice(["M", "F"])
+    email = quitar_tildes(f"{n}.{a.split()[0]}{sid}@correo.com").lower()
+    tel = f"{random.choice([6, 7])}{random.randint(100, 999)}-{random.randint(1000, 9999)}"
+
+    # ---- suciedad controlada (se corrige / registra en la carga) ----
+    r = random.random()
+    if r < 0.02:
+        n, a, email = "  " + n.upper() + " ", a.upper() + "  ", email.upper()   # espacios y mayúsculas
+    elif r < 0.03:
+        sexo = random.choice(["masculino", "Femenino", "m", "f"])                  # sexo sin normalizar
+    elif r < 0.04:
+        tel = ""                                                                   # teléfono vacío
+    elif r < 0.045:
+        nac_txt = "31/02/1990"                                                     # fecha imposible
+
+    meses_posibles = (FIN.year - alta.year) * 12 + FIN.month - alta.month + 1
+    meses = min(meses_posibles, max(1, int(random.expovariate(1 / 9)) + 1))
+    estado = "Inactivo" if (alta.year * 12 + alta.month - 1 + meses <= FIN.year * 12 + FIN.month - 1) else "Activo"
+    socios.append((sid, n, a, email, tel, nac_txt, sexo, alta.isoformat(), estado))
+
+    plan = random.choices([1, 2, 3, 4], PESOS_PLAN)[0]
+    pasos = 3 if plan == 4 else 1
+    m = 0
+    while m < meses:
+        ini = add_months(alta, m)
+        fin = add_months(ini, pasos) - timedelta(days=1)
+        susc_id += 1
+        susc.append((susc_id, sid, plan, ini.isoformat(), fin.isoformat(), "Vigente" if fin >= FIN else "Vencida"))
+        precio = float(planes[plan - 1][2])
+        est = random.choices(["Pagado", "Pendiente", "Rechazado"], [0.94, 0.04, 0.02])[0]
+        monto = f"{precio:.2f}"
+        x = random.random()
+        if x < 0.0008:
+            monto = f"-{precio:.2f}"       # suciedad: monto negativo -> se rechaza
+        elif x < 0.0014:
+            monto = "N/D"                  # suciedad: monto no numérico -> se rechaza
+        pago_id += 1
+        pagos.append((pago_id, susc_id, (ini + timedelta(days=random.randint(0, 3))).isoformat(), monto,
+                      random.choices(["Tarjeta", "Efectivo", "Transferencia"], [0.5, 0.3, 0.2])[0], est))
+        for k in range(pasos):
+            mm = add_months(ini, k)
+            if mm <= FIN:
+                activo_en.setdefault((mm.year, mm.month), []).append(sid)
+        m += pasos
+        if random.random() < 0.08:  # a veces cambia de plan al renovar
+            plan = random.choices([1, 2, 3, 4], PESOS_PLAN)[0]
+            pasos = 3 if plan == 4 else 1
+
+w("socios.csv", ["socio_id", "nombres", "apellidos", "email", "telefono", "fecha_nacimiento", "sexo",
+                 "fecha_registro", "estado"], socios)
+w("suscripciones.csv", ["suscripcion_id", "socio_id", "plan_id", "fecha_inicio", "fecha_fin", "estado"], susc)
+w("pagos.csv", ["pago_id", "suscripcion_id", "fecha_pago", "monto", "metodo_pago", "estado"], pagos)
+
+# ------------------------------------------------------------ sesiones y reservas
+horas = [6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 19, 20]
+sesiones, reservas = [], []
+ses_id = res_id = 0
+d = INI
+while d <= FIN:
+    if d.weekday() != 6:  # lunes a sábado
+        for h in sorted(random.sample(horas, 11)):
+            sala, tipo = random.choice(salas), random.choice(tipos)
+            ses_id += 1
+            ini = datetime(d.year, d.month, d.day, h, 0)
+            fin = ini + timedelta(minutes=tipo[2])
+            cupo = sala[2]
+            sesiones.append((ses_id, tipo[0], random.randint(1, 20), sala[0],
+                             ini.isoformat(sep=" "), fin.isoformat(sep=" "), cupo))
+            pool = activo_en.get((d.year, d.month), [])
+            n = min(len(pool), round(cupo * random.uniform(0.45, 0.98)))
+            for sid in random.sample(pool, n):
+                res_id += 1
+                est = random.choices(["Asistio", "NoAsistio", "Cancelada"], [0.68, 0.15, 0.17])[0]
+                fr = ini - timedelta(hours=random.randint(1, 72), minutes=random.randint(0, 59))
+                reservas.append((res_id, ses_id, sid, fr.isoformat(sep=" "), est))
+    d += timedelta(days=1)
+w("sesiones.csv", ["sesion_id", "tipo_clase_id", "entrenador_id", "sala_id", "fecha_hora_inicio",
+                   "fecha_hora_fin", "cupo_maximo"], sesiones)
+w("reservas.csv", ["reserva_id", "sesion_id", "socio_id", "fecha_reserva", "estado"], reservas)
+
+# >>>>>> COMMIT FINAL: git add datos/ && git commit -m "feat(datos): generador de CSV reproducible con datos sucios controlados"
+======== FIN DEL CODIGO (datos/generar_datos.py) ========
+
+##############################################################################
+# ARCHIVO: sql/03_carga_datos.sql
+# ETL: CSV -> staging -> limpieza -> tablas finales
+##############################################################################
+======== INICIO DEL CODIGO (sql/03_carga_datos.sql) ========
+/* =====================================================================
+   Archivo : 03_carga_datos.sql
+   Responsable: Integrante 2 (Migración / carga de datos)
+   Objetivo: ETL en 3 fases:  CSV -> staging (BULK INSERT) -> limpieza/validación -> tablas finales.
+   Requisitos:
+     1) Ejecutar antes 01 y 02.   2) Generar los CSV:  python datos/generar_datos.py
+     3) Copiar la carpeta /datos a  C:\ProyectoGimnasio\datos\  (cambiar @Ruta si es otra)
+     4) La cuenta de servicio de SQL Server necesita permiso de LECTURA sobre esa carpeta.
+   Alternativas documentadas en el informe: Import Flat File Wizard, bcp, Power Query.
+   ===================================================================== */
+USE GimnasioDB;
+GO
+SET NOCOUNT ON;
+GO
+
+/* ============ FASE 0: parámetros y tablas de control ============ */
+IF OBJECT_ID('staging.Rechazo') IS NULL
+    CREATE TABLE staging.Rechazo (RechazoID INT IDENTITY PRIMARY KEY, Tabla SYSNAME, Clave NVARCHAR(50),
+                                  Motivo NVARCHAR(200), Valor NVARCHAR(200), FechaHora DATETIME2(0) DEFAULT SYSDATETIME());
+IF OBJECT_ID('staging.LogCarga') IS NULL
+    CREATE TABLE staging.LogCarga (LogID INT IDENTITY PRIMARY KEY, Tabla SYSNAME, Leidas INT, Insertadas INT,
+                                   Advertencias INT, Rechazadas INT, FechaHora DATETIME2(0) DEFAULT SYSDATETIME());
+TRUNCATE TABLE staging.Rechazo;
+TRUNCATE TABLE staging.LogCarga;
+GO
+
+/* ============ FASE 1: tablas de aterrizaje (todo texto, sin restricciones) ============ */
+DROP TABLE IF EXISTS staging.PlanMembresia, staging.TipoClase, staging.Sala, staging.Entrenador, staging.Socio,
+                     staging.Suscripcion, staging.Pago, staging.Sesion, staging.Reserva;
+CREATE TABLE staging.PlanMembresia (plan_id NVARCHAR(200), nombre NVARCHAR(200), precio NVARCHAR(200), duracion_meses NVARCHAR(200), descripcion NVARCHAR(200));
+CREATE TABLE staging.TipoClase     (tipo_clase_id NVARCHAR(200), nombre NVARCHAR(200), duracion_min NVARCHAR(200), intensidad NVARCHAR(200));
+CREATE TABLE staging.Sala          (sala_id NVARCHAR(200), nombre NVARCHAR(200), capacidad NVARCHAR(200));
+CREATE TABLE staging.Entrenador    (entrenador_id NVARCHAR(200), nombres NVARCHAR(200), apellidos NVARCHAR(200), email NVARCHAR(200), especialidad NVARCHAR(200), fecha_contratacion NVARCHAR(200), activo NVARCHAR(200));
+CREATE TABLE staging.Socio         (socio_id NVARCHAR(200), nombres NVARCHAR(200), apellidos NVARCHAR(200), email NVARCHAR(200), telefono NVARCHAR(200), fecha_nacimiento NVARCHAR(200), sexo NVARCHAR(200), fecha_registro NVARCHAR(200), estado NVARCHAR(200));
+CREATE TABLE staging.Suscripcion   (suscripcion_id NVARCHAR(200), socio_id NVARCHAR(200), plan_id NVARCHAR(200), fecha_inicio NVARCHAR(200), fecha_fin NVARCHAR(200), estado NVARCHAR(200));
+CREATE TABLE staging.Pago          (pago_id NVARCHAR(200), suscripcion_id NVARCHAR(200), fecha_pago NVARCHAR(200), monto NVARCHAR(200), metodo_pago NVARCHAR(200), estado NVARCHAR(200));
+CREATE TABLE staging.Sesion        (sesion_id NVARCHAR(200), tipo_clase_id NVARCHAR(200), entrenador_id NVARCHAR(200), sala_id NVARCHAR(200), fecha_hora_inicio NVARCHAR(200), fecha_hora_fin NVARCHAR(200), cupo_maximo NVARCHAR(200));
+CREATE TABLE staging.Reserva       (reserva_id NVARCHAR(200), sesion_id NVARCHAR(200), socio_id NVARCHAR(200), fecha_reserva NVARCHAR(200), estado NVARCHAR(200));
+GO
+
+/* Función de apoyo: "  JOSÉ  " -> "José"   /   "RAMÍREZ HERNÁNDEZ" -> "Ramírez Hernández" */
+CREATE OR ALTER FUNCTION staging.fn_InitCap (@s NVARCHAR(200)) RETURNS NVARCHAR(200)
+AS
+BEGIN
+    SET @s = LOWER(LTRIM(RTRIM(@s)));
+    DECLARE @i INT = 1, @r NVARCHAR(200) = N'', @c NCHAR(1), @prev NCHAR(1) = N' ';
+    WHILE @i <= LEN(@s)
+    BEGIN
+        SET @c = SUBSTRING(@s, @i, 1);
+        SET @r += CASE WHEN @prev = N' ' THEN UPPER(@c) ELSE @c END;
+        SET @prev = @c; SET @i += 1;
+    END
+    RETURN @r;
+END
+GO
+
+/* Procedimiento genérico de carga CSV -> staging (BULK INSERT no admite variables: SQL dinámico) */
+CREATE OR ALTER PROCEDURE staging.usp_CargarCSV @Tabla SYSNAME, @Archivo NVARCHAR(300), @UltimaColumna SYSNAME
+AS
+BEGIN
+    SET NOCOUNT ON;
+    DECLARE @sql NVARCHAR(MAX) =
+        N'BULK INSERT staging.' + QUOTENAME(@Tabla) + N' FROM ''' + @Archivo + N'''
+          WITH (FORMAT = ''CSV'', FIRSTROW = 2, FIELDQUOTE = ''"'', ROWTERMINATOR = ''0x0a'', CODEPAGE = ''65001'', TABLOCK);
+          UPDATE staging.' + QUOTENAME(@Tabla) + N' SET ' + QUOTENAME(@UltimaColumna) + N' = REPLACE(' + QUOTENAME(@UltimaColumna) + N', CHAR(13), '''');';
+    EXEC (@sql);   -- el REPLACE protege contra archivos con fin de línea CRLF (Windows/Git)
+END
+GO
+
+DECLARE @Ruta NVARCHAR(260) = N'C:\ProyectoGimnasio\datos\';    -- <<< AJUSTAR SI ES NECESARIO
+DECLARE @t0 DATETIME2 = SYSDATETIME();
+EXEC staging.usp_CargarCSV 'PlanMembresia', @Ruta + N'planes.csv',        'descripcion';
+EXEC staging.usp_CargarCSV 'TipoClase',     @Ruta + N'tipos_clase.csv',   'intensidad';
+EXEC staging.usp_CargarCSV 'Sala',          @Ruta + N'salas.csv',         'capacidad';
+EXEC staging.usp_CargarCSV 'Entrenador',    @Ruta + N'entrenadores.csv',  'activo';
+EXEC staging.usp_CargarCSV 'Socio',         @Ruta + N'socios.csv',        'estado';
+EXEC staging.usp_CargarCSV 'Suscripcion',   @Ruta + N'suscripciones.csv', 'estado';
+EXEC staging.usp_CargarCSV 'Pago',          @Ruta + N'pagos.csv',         'estado';
+EXEC staging.usp_CargarCSV 'Sesion',        @Ruta + N'sesiones.csv',      'cupo_maximo';
+EXEC staging.usp_CargarCSV 'Reserva',       @Ruta + N'reservas.csv',      'estado';
+PRINT CONCAT('Fase 1 (CSV -> staging) completada en ', DATEDIFF(SECOND, @t0, SYSDATETIME()), ' s');
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/03_carga_datos.sql && git commit -m "feat(etl): tablas staging y BULK INSERT"
+/* ============ FASE 2: reinicio de tablas finales (permite re-ejecutar) ============ */
+DELETE FROM operacion.Reserva;   DELETE FROM finanzas.Pago;       DELETE FROM finanzas.Suscripcion;
+DELETE FROM operacion.Sesion;    DELETE FROM personas.Socio;      DELETE FROM personas.Entrenador;
+DELETE FROM operacion.TipoClase; DELETE FROM operacion.Sala;      DELETE FROM finanzas.PlanMembresia;
+GO
+
+/* ============ FASE 3: limpieza + carga a tablas finales (respetando el orden de las FK) ============ */
+-- 3.1 Catálogos
+SET IDENTITY_INSERT finanzas.PlanMembresia ON;
+INSERT finanzas.PlanMembresia (PlanID, Nombre, Precio, DuracionMeses, Descripcion)
+SELECT TRY_CONVERT(int, plan_id), LTRIM(RTRIM(nombre)), TRY_CONVERT(decimal(8,2), precio), TRY_CONVERT(tinyint, duracion_meses), NULLIF(LTRIM(RTRIM(descripcion)), '')
+FROM staging.PlanMembresia;
+SET IDENTITY_INSERT finanzas.PlanMembresia OFF;
+INSERT staging.LogCarga (Tabla, Leidas, Insertadas, Advertencias, Rechazadas)
+SELECT 'PlanMembresia', (SELECT COUNT(*) FROM staging.PlanMembresia), (SELECT COUNT(*) FROM finanzas.PlanMembresia), 0, 0;
+
+SET IDENTITY_INSERT operacion.TipoClase ON;
+INSERT operacion.TipoClase (TipoClaseID, Nombre, DuracionMin, Intensidad)
+SELECT TRY_CONVERT(int, tipo_clase_id), LTRIM(RTRIM(nombre)), TRY_CONVERT(smallint, duracion_min), LTRIM(RTRIM(intensidad)) FROM staging.TipoClase;
+SET IDENTITY_INSERT operacion.TipoClase OFF;
+INSERT staging.LogCarga (Tabla, Leidas, Insertadas, Advertencias, Rechazadas)
+SELECT 'TipoClase', (SELECT COUNT(*) FROM staging.TipoClase), (SELECT COUNT(*) FROM operacion.TipoClase), 0, 0;
+
+SET IDENTITY_INSERT operacion.Sala ON;
+INSERT operacion.Sala (SalaID, Nombre, Capacidad)
+SELECT TRY_CONVERT(int, sala_id), LTRIM(RTRIM(nombre)), TRY_CONVERT(smallint, capacidad) FROM staging.Sala;
+SET IDENTITY_INSERT operacion.Sala OFF;
+INSERT staging.LogCarga (Tabla, Leidas, Insertadas, Advertencias, Rechazadas)
+SELECT 'Sala', (SELECT COUNT(*) FROM staging.Sala), (SELECT COUNT(*) FROM operacion.Sala), 0, 0;
+
+SET IDENTITY_INSERT personas.Entrenador ON;
+INSERT personas.Entrenador (EntrenadorID, Nombres, Apellidos, Email, Especialidad, FechaContratacion, Activo)
+SELECT TRY_CONVERT(int, entrenador_id), staging.fn_InitCap(nombres), staging.fn_InitCap(apellidos), LOWER(LTRIM(RTRIM(email))),
+       LTRIM(RTRIM(especialidad)), TRY_CONVERT(date, fecha_contratacion, 23), TRY_CONVERT(bit, activo)
+FROM staging.Entrenador;
+SET IDENTITY_INSERT personas.Entrenador OFF;
+INSERT staging.LogCarga (Tabla, Leidas, Insertadas, Advertencias, Rechazadas)
+SELECT 'Entrenador', (SELECT COUNT(*) FROM staging.Entrenador), (SELECT COUNT(*) FROM personas.Entrenador), 0, 0;
+GO
+
+-- 3.2 Socios: se CORRIGE (trim, capitalización, email en minúsculas, sexo normalizado, teléfono vacío -> NULL)
+--     y se REGISTRA como advertencia cualquier fecha de nacimiento imposible (se carga NULL).
+INSERT staging.Rechazo (Tabla, Clave, Motivo, Valor)
+SELECT 'Socio', socio_id, 'ADVERTENCIA: fecha de nacimiento inválida, se cargó NULL', fecha_nacimiento
+FROM staging.Socio WHERE TRY_CONVERT(date, fecha_nacimiento, 23) IS NULL AND NULLIF(LTRIM(RTRIM(fecha_nacimiento)), '') IS NOT NULL;
+DECLARE @advSocio INT = @@ROWCOUNT;
+
+SET IDENTITY_INSERT personas.Socio ON;
+INSERT personas.Socio (SocioID, Nombres, Apellidos, Email, Telefono, FechaNacimiento, Sexo, FechaRegistro, Estado)
+SELECT TRY_CONVERT(int, socio_id), staging.fn_InitCap(nombres), staging.fn_InitCap(apellidos), LOWER(LTRIM(RTRIM(email))),
+       NULLIF(LTRIM(RTRIM(telefono)), ''), TRY_CONVERT(date, fecha_nacimiento, 23),
+       CASE UPPER(LEFT(LTRIM(sexo), 1)) WHEN 'M' THEN 'M' WHEN 'F' THEN 'F' END,
+       TRY_CONVERT(date, fecha_registro, 23), LTRIM(RTRIM(estado))
+FROM staging.Socio;
+DECLARE @insSocio INT = @@ROWCOUNT;
+SET IDENTITY_INSERT personas.Socio OFF;
+INSERT staging.LogCarga (Tabla, Leidas, Insertadas, Advertencias, Rechazadas)
+SELECT 'Socio', (SELECT COUNT(*) FROM staging.Socio), @insSocio, @advSocio, 0;
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/03_carga_datos.sql && git commit -m "feat(etl): catalogos y limpieza de socios (initcap, sexo, telefono)"
+-- 3.3 Sesiones y suscripciones
+SET IDENTITY_INSERT operacion.Sesion ON;
+INSERT operacion.Sesion (SesionID, TipoClaseID, EntrenadorID, SalaID, FechaHoraInicio, FechaHoraFin, CupoMaximo)
+SELECT TRY_CONVERT(int, sesion_id), TRY_CONVERT(int, tipo_clase_id), TRY_CONVERT(int, entrenador_id), TRY_CONVERT(int, sala_id),
+       TRY_CONVERT(datetime2(0), fecha_hora_inicio, 120), TRY_CONVERT(datetime2(0), fecha_hora_fin, 120), TRY_CONVERT(smallint, cupo_maximo)
+FROM staging.Sesion;
+SET IDENTITY_INSERT operacion.Sesion OFF;
+INSERT staging.LogCarga (Tabla, Leidas, Insertadas, Advertencias, Rechazadas)
+SELECT 'Sesion', (SELECT COUNT(*) FROM staging.Sesion), (SELECT COUNT(*) FROM operacion.Sesion), 0, 0;
+
+SET IDENTITY_INSERT finanzas.Suscripcion ON;
+INSERT finanzas.Suscripcion (SuscripcionID, SocioID, PlanID, FechaInicio, FechaFin, Estado)
+SELECT TRY_CONVERT(int, suscripcion_id), TRY_CONVERT(int, socio_id), TRY_CONVERT(int, plan_id),
+       TRY_CONVERT(date, fecha_inicio, 23), TRY_CONVERT(date, fecha_fin, 23), LTRIM(RTRIM(estado))
+FROM staging.Suscripcion;
+SET IDENTITY_INSERT finanzas.Suscripcion OFF;
+INSERT staging.LogCarga (Tabla, Leidas, Insertadas, Advertencias, Rechazadas)
+SELECT 'Suscripcion', (SELECT COUNT(*) FROM staging.Suscripcion), (SELECT COUNT(*) FROM finanzas.Suscripcion), 0, 0;
+GO
+
+-- 3.4 Pagos: se RECHAZAN montos no numéricos o <= 0 y fechas inválidas (quedan en staging.Rechazo)
+INSERT staging.Rechazo (Tabla, Clave, Motivo, Valor)
+SELECT 'Pago', pago_id,
+       CASE WHEN TRY_CONVERT(decimal(10,2), monto) IS NULL THEN 'RECHAZADO: monto no numérico'
+            WHEN TRY_CONVERT(decimal(10,2), monto) <= 0     THEN 'RECHAZADO: monto negativo o cero'
+            ELSE 'RECHAZADO: fecha de pago inválida' END, CONCAT('monto=', monto, ' fecha=', fecha_pago)
+FROM staging.Pago
+WHERE ISNULL(TRY_CONVERT(decimal(10,2), monto), -1) <= 0 OR TRY_CONVERT(date, fecha_pago, 23) IS NULL;
+DECLARE @rechPago INT = @@ROWCOUNT;
+
+SET IDENTITY_INSERT finanzas.Pago ON;
+INSERT finanzas.Pago (PagoID, SuscripcionID, FechaPago, Monto, MetodoPago, Estado)
+SELECT TRY_CONVERT(bigint, pago_id), TRY_CONVERT(int, suscripcion_id), TRY_CONVERT(date, fecha_pago, 23),
+       TRY_CONVERT(decimal(10,2), monto), LTRIM(RTRIM(metodo_pago)), LTRIM(RTRIM(estado))
+FROM staging.Pago
+WHERE ISNULL(TRY_CONVERT(decimal(10,2), monto), -1) > 0 AND TRY_CONVERT(date, fecha_pago, 23) IS NOT NULL;
+DECLARE @insPago INT = @@ROWCOUNT;
+SET IDENTITY_INSERT finanzas.Pago OFF;
+INSERT staging.LogCarga (Tabla, Leidas, Insertadas, Advertencias, Rechazadas)
+SELECT 'Pago', (SELECT COUNT(*) FROM staging.Pago), @insPago, 0, @rechPago;
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/03_carga_datos.sql && git commit -m "feat(etl): sesiones, suscripciones y rechazo de pagos invalidos"
+-- 3.5 Reservas (tabla más grande)
+SET IDENTITY_INSERT operacion.Reserva ON;
+INSERT operacion.Reserva (ReservaID, SesionID, SocioID, FechaReserva, Estado)
+SELECT TRY_CONVERT(bigint, reserva_id), TRY_CONVERT(int, sesion_id), TRY_CONVERT(int, socio_id),
+       TRY_CONVERT(datetime2(0), fecha_reserva, 120), LTRIM(RTRIM(estado))
+FROM staging.Reserva;
+SET IDENTITY_INSERT operacion.Reserva OFF;
+INSERT staging.LogCarga (Tabla, Leidas, Insertadas, Advertencias, Rechazadas)
+SELECT 'Reserva', (SELECT COUNT(*) FROM staging.Reserva), (SELECT COUNT(*) FROM operacion.Reserva), 0, 0;
+GO
+
+/* ============ FASE 4: validaciones y evidencia para el informe ============ */
+-- 4.1 Conciliación: leídas = insertadas + rechazadas
+SELECT Tabla, Leidas, Insertadas, Advertencias, Rechazadas,
+       IIF(Leidas = Insertadas + Rechazadas, 'OK', 'REVISAR') AS Conciliacion
+FROM staging.LogCarga ORDER BY LogID;
+
+-- 4.2 Detalle de filas rechazadas / advertencias
+SELECT Tabla, Clave, Motivo, Valor FROM staging.Rechazo ORDER BY Tabla, Clave;
+
+-- 4.3 Integridad referencial (todas deben dar 0)
+SELECT 'Reservas sin socio'   AS Prueba, COUNT(*) AS Huerfanas FROM operacion.Reserva r LEFT JOIN personas.Socio s ON s.SocioID = r.SocioID WHERE s.SocioID IS NULL
+UNION ALL SELECT 'Reservas sin sesion', COUNT(*) FROM operacion.Reserva r LEFT JOIN operacion.Sesion s ON s.SesionID = r.SesionID WHERE s.SesionID IS NULL
+UNION ALL SELECT 'Pagos sin suscripcion', COUNT(*) FROM finanzas.Pago p LEFT JOIN finanzas.Suscripcion s ON s.SuscripcionID = p.SuscripcionID WHERE s.SuscripcionID IS NULL;
+
+-- 4.4 Perfilado rápido
+SELECT 'Socios' AS Tabla, COUNT(*) AS Filas FROM personas.Socio
+UNION ALL SELECT 'Entrenadores', COUNT(*) FROM personas.Entrenador
+UNION ALL SELECT 'Sesiones', COUNT(*) FROM operacion.Sesion
+UNION ALL SELECT 'Reservas', COUNT(*) FROM operacion.Reserva
+UNION ALL SELECT 'Suscripciones', COUNT(*) FROM finanzas.Suscripcion
+UNION ALL SELECT 'Pagos', COUNT(*) FROM finanzas.Pago;
+GO
+
+-- 4.5 Estadísticas completas tras la carga masiva (mejora los planes de ejecución)
+UPDATE STATISTICS operacion.Reserva WITH FULLSCAN;   UPDATE STATISTICS operacion.Sesion WITH FULLSCAN;
+UPDATE STATISTICS finanzas.Pago WITH FULLSCAN;       UPDATE STATISTICS finanzas.Suscripcion WITH FULLSCAN;
+UPDATE STATISTICS personas.Socio WITH FULLSCAN;
+GO
+
+/* Opcional: liberar staging tras validar
+   DROP TABLE staging.Socio, staging.Pago, staging.Reserva, staging.Sesion, staging.Suscripcion, staging.Entrenador, staging.Sala, staging.TipoClase, staging.PlanMembresia;
+*/
+
+-- >>>>>> COMMIT FINAL: git add sql/03_carga_datos.sql && git commit -m "test(etl): reservas, conciliacion e integridad referencial"
+======== FIN DEL CODIGO (sql/03_carga_datos.sql) ========
+
+##############################################################################
+# ARCHIVO: sql/06_vistas_powerbi.sql
+# Vistas para Power BI (capa semantica de solo lectura)
+##############################################################################
+======== INICIO DEL CODIGO (sql/06_vistas_powerbi.sql) ========
+/* =====================================================================
+   Archivo : 06_vistas_powerbi.sql
+   Responsable: Integrante 2 (Dashboard Power BI) - usa las consultas del Integrante 4
+   Objetivo: Capa semántica de sólo lectura para Power BI.
+             Cada vista es el SELECT 1/2/3 de 05_optimizacion_consultas.sql SIN el filtro
+             de fechas (granularidad mensual), de modo que el dashboard pueda filtrar por mes.
+   TRAZABILIDAD:  Gráfico 1 <- vw_OcupacionClases   (SELECT 1)
+                  Gráfico 2 <- vw_IngresosPorPlan    (SELECT 2)
+                  Gráfico 3 <- vw_RankingEntrenadores (SELECT 3)
+   ===================================================================== */
+USE GimnasioDB;
+GO
+CREATE OR ALTER VIEW reportes.vw_OcupacionClases AS
+WITH ReservasPorSesion AS (
+    SELECT s.SesionID, s.TipoClaseID, s.CupoMaximo,
+           DATEFROMPARTS(YEAR(s.FechaHoraInicio), MONTH(s.FechaHoraInicio), 1) AS Mes,
+           COUNT(r.ReservaID) AS Reservas
+    FROM operacion.Sesion s
+    LEFT JOIN operacion.Reserva r ON r.SesionID = s.SesionID AND r.Estado <> 'Cancelada'
+    GROUP BY s.SesionID, s.TipoClaseID, s.CupoMaximo, DATEFROMPARTS(YEAR(s.FechaHoraInicio), MONTH(s.FechaHoraInicio), 1)
+)
+SELECT rs.Mes, tc.Nombre AS TipoClase, COUNT(*) AS Sesiones, SUM(rs.CupoMaximo) AS CupoTotal, SUM(rs.Reservas) AS Reservas,
+       CAST(100.0 * SUM(rs.Reservas) / SUM(rs.CupoMaximo) AS DECIMAL(5,2)) AS PctOcupacion
+FROM ReservasPorSesion rs
+JOIN operacion.TipoClase tc ON tc.TipoClaseID = rs.TipoClaseID
+GROUP BY rs.Mes, tc.Nombre;
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/06_vistas_powerbi.sql && git commit -m "feat(bi): vista de ocupacion de clases"
+CREATE OR ALTER VIEW reportes.vw_IngresosPorPlan AS
+SELECT DATEFROMPARTS(YEAR(p.FechaPago), MONTH(p.FechaPago), 1) AS Mes, pl.Nombre AS PlanNombre,
+       COUNT(*) AS NumPagos, SUM(p.Monto) AS Ingresos, CAST(AVG(p.Monto) AS DECIMAL(10,2)) AS TicketPromedio
+FROM finanzas.Pago p
+JOIN finanzas.Suscripcion   su ON su.SuscripcionID = p.SuscripcionID
+JOIN finanzas.PlanMembresia pl ON pl.PlanID = su.PlanID
+WHERE p.Estado = 'Pagado'
+GROUP BY DATEFROMPARTS(YEAR(p.FechaPago), MONTH(p.FechaPago), 1), pl.Nombre;
+GO
+
+-- >>>>>> COMMIT AQUI (todo lo anterior): git add sql/06_vistas_powerbi.sql && git commit -m "feat(bi): vista de ingresos por plan"
+CREATE OR ALTER VIEW reportes.vw_RankingEntrenadores AS
+WITH AsistenciaMensual AS (
+    SELECT e.EntrenadorID, e.Nombres + N' ' + e.Apellidos AS Entrenador,
+           DATEFROMPARTS(YEAR(s.FechaHoraInicio), MONTH(s.FechaHoraInicio), 1) AS Mes, COUNT(*) AS Asistencias
+    FROM operacion.Reserva r
+    JOIN operacion.Sesion s ON s.SesionID = r.SesionID
+    JOIN personas.Entrenador e ON e.EntrenadorID = s.EntrenadorID
+    WHERE r.Estado = 'Asistio'
+    GROUP BY e.EntrenadorID, e.Nombres, e.Apellidos, DATEFROMPARTS(YEAR(s.FechaHoraInicio), MONTH(s.FechaHoraInicio), 1)
+)
+SELECT Mes, Entrenador, Asistencias,
+       RANK() OVER (PARTITION BY Mes ORDER BY Asistencias DESC) AS PosicionMes,
+       LAG(Asistencias) OVER (PARTITION BY EntrenadorID ORDER BY Mes) AS AsistenciasMesAnterior,
+       CAST(AVG(Asistencias * 1.0) OVER (PARTITION BY EntrenadorID ORDER BY Mes ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS DECIMAL(8,1)) AS PromedioMovil3M
+FROM AsistenciaMensual;
+GO
+
+/* ---------- VALIDACIÓN "¿Coinciden los resultados?" (mostrar en la defensa) ----------
+   Las vistas, filtradas al mismo periodo, deben dar EXACTAMENTE lo mismo que los SELECT 1 y 2. */
+SELECT 'SELECT1 vs vista (mayo 2026)' AS Prueba,
+       (SELECT SUM(Reservas) FROM reportes.vw_OcupacionClases WHERE Mes = '20260501') AS ValorVista,
+       (SELECT COUNT(*) FROM operacion.Reserva r JOIN operacion.Sesion s ON s.SesionID = r.SesionID
+         WHERE r.Estado <> 'Cancelada' AND s.FechaHoraInicio >= '20260501' AND s.FechaHoraInicio < '20260601') AS ValorBase
+UNION ALL
+SELECT 'SELECT2 vs vista (ene-jun 2026)',
+       (SELECT SUM(Ingresos) FROM reportes.vw_IngresosPorPlan WHERE Mes >= '20260101' AND Mes < '20260701'),
+       (SELECT SUM(Monto) FROM finanzas.Pago WHERE Estado = 'Pagado' AND FechaPago >= '20260101' AND FechaPago < '20260701');
+GO
+
+-- >>>>>> COMMIT FINAL: git add sql/06_vistas_powerbi.sql && git commit -m "feat(bi): vista de ranking y prueba de coincidencia vista vs consulta"
+======== FIN DEL CODIGO (sql/06_vistas_powerbi.sql) ========
+
+##############################################################################
+# ARCHIVO: powerbi/GUIA_POWERBI.md
+# GUIA DE POWER BI (seguir al pie de la letra)
+##############################################################################
+======== INICIO DEL CODIGO (powerbi/GUIA_POWERBI.md) ========
+# Guía Power BI (Int. 2) – el .pbix debe crearse en Power BI Desktop
+1. **Obtener datos → SQL Server**: servidor de su instancia, base `GimnasioDB`, modo **Import**. Credenciales de base de datos: `lg_reportes` / contraseña de `04_seguridad.sql` (demuestra mínimo privilegio).
+2. Seleccionar solo `reportes.vw_OcupacionClases`, `reportes.vw_IngresosPorPlan`, `reportes.vw_RankingEntrenadores`. Marcar `Mes` como fecha.
+3. Medidas DAX:
+```
+% Ocupación = DIVIDE(SUM(vw_OcupacionClases[Reservas]), SUM(vw_OcupacionClases[CupoTotal]))
+Ingresos = SUM(vw_IngresosPorPlan[Ingresos])
+Ticket Promedio = DIVIDE(SUM(vw_IngresosPorPlan[Ingresos]), SUM(vw_IngresosPorPlan[NumPagos]))
+```
+4. Visuales (trazabilidad):
+| Gráfico | Fuente | Configuración |
+|---|---|---|
+| 1 Barras | SELECT 1 | Eje `TipoClase`, valor `% Ocupación`, orden descendente |
+| 2 Columnas apiladas | SELECT 2 | Eje `Mes`, leyenda `PlanNombre`, valor `Ingresos` |
+| 3 Líneas | SELECT 3 | Eje `Mes`, leyenda `Entrenador`, valor `Asistencias`, filtro visual `PosicionMes ≤ 5` |
+| Extra | — | Segmentador de `Mes`, tarjetas Ingresos y Ticket Promedio |
+5. **Validar**: filtrar mayo 2026 en el gráfico 1 y comparar con el resultado de SELECT 1; ene–jun 2026 en gráfico 2 vs SELECT 2.
+6. **Demo de actualización**: cambiar un dato en SQL → *Inicio → Actualizar* → el gráfico cambia. Guardar como `powerbi/GymVital.pbix` y tomar capturas para el informe.
+
+======== FIN DEL CODIGO (powerbi/GUIA_POWERBI.md) ========
+
+==============================================================================
+COMMITS QUE FALTAN
+==============================================================================
+  git add powerbi/GymVital.pbix && git commit -m "feat(bi): dashboard .pbix con 3 visuales"
+  git add docs/ && git commit -m "docs(informe): capitulos 3 y 7"
+
+==============================================================================
+INFORME - TUS CAPITULOS (3 y 7)
+==============================================================================
+  Cap. 3: pegar CAPTURA 1 (LogCarga y Rechazo). Verificar que las cifras coincidan con la tabla de reglas de limpieza.
+  Cap. 7: pegar CAPTURA 4 (dashboard) y CAPTURA 3 (coincidencia vista vs consulta).
+
+==============================================================================
+DIAPOSITIVA 8 - guion de 2-3 minutos (demostracion)
+==============================================================================
+  1) Mostrar el dashboard. 2) Trazabilidad: grafico 1 <- SELECT 1, 2 <- SELECT 2, 3 <- SELECT 3.
+  3) Demo de actualizacion (paso 3.4). 4) Decisiones: ampliar clases llenas, ajustar precios por plan, asignar horarios.
+  5) "Coinciden": mostrar la prueba del script 06.
+  Reemplaza el texto [CAPTURA O DEMOSTRACION] por una imagen del dashboard.
+
+==============================================================================
+PREGUNTAS PROBABLES DE DEFENSA
+==============================================================================
+  - Por que staging todo en texto? -> Para que ningun dato malo rompa la carga; se valida y convierte despues con TRY_CONVERT.
+  - Que hacen con los pagos invalidos? -> Se rechazan y quedan en staging.Rechazo con el motivo (56 filas).
+  - Por que BULK INSERT y no el asistente? -> Es repetible, auditable y versionable en Git.
+  - Por que Power BI usa vistas y el usuario lg_reportes? -> Minimo privilegio: lee reportes sin tocar las tablas base.
+  - Import o DirectQuery? -> Import (rapido, offline); para datos en vivo se programaria actualizacion con gateway.
+
+==============================================================================
+CIERRE - SUBIR TU TRABAJO
+==============================================================================
+  git push -u origin feature/int2-datos-bi
+  En GitHub/GitLab: abrir Pull Request  feature/int2-datos-bi  ->  develop
+  Revisor asignado: Integrante 1 (debe EJECUTAR tu script en su equipo antes de aprobar).
+  Tu revisas el PR de: Integrante 3.
+  Antes del PR:  git pull --rebase origin develop
+  Para ver tus commits (evidencia para el informe, cap. 9):  git shortlog -sn

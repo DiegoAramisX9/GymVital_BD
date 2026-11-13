@@ -1,0 +1,43 @@
+digraph ER {
+  rankdir=LR; splines=polyline; nodesep=0.45; ranksep=0.9; fontname="Helvetica";
+  node [shape=plaintext, fontname="Helvetica", fontsize=10];
+  edge [fontname="Helvetica", fontsize=9, arrowhead=crow, arrowtail=tee, dir=both, color="#475569"];
+
+  Socio [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+    <TR><TD BGCOLOR="#0F766E"><FONT COLOR="white"><B>personas.Socio</B></FONT></TD></TR>
+    <TR><TD ALIGN="LEFT"><B>PK</B> SocioID<BR ALIGN="LEFT"/>Nombres, Apellidos<BR ALIGN="LEFT"/>Email (UQ) · Telefono<BR ALIGN="LEFT"/>FechaNacimiento · Sexo<BR ALIGN="LEFT"/>FechaRegistro · Estado<BR ALIGN="LEFT"/></TD></TR></TABLE>>];
+  Entrenador [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+    <TR><TD BGCOLOR="#0F766E"><FONT COLOR="white"><B>personas.Entrenador</B></FONT></TD></TR>
+    <TR><TD ALIGN="LEFT"><B>PK</B> EntrenadorID<BR ALIGN="LEFT"/>Nombres, Apellidos<BR ALIGN="LEFT"/>Email (UQ) · Especialidad<BR ALIGN="LEFT"/>FechaContratacion · Activo<BR ALIGN="LEFT"/></TD></TR></TABLE>>];
+  Sala [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+    <TR><TD BGCOLOR="#1D4ED8"><FONT COLOR="white"><B>operacion.Sala</B></FONT></TD></TR>
+    <TR><TD ALIGN="LEFT"><B>PK</B> SalaID<BR ALIGN="LEFT"/>Nombre (UQ) · Capacidad<BR ALIGN="LEFT"/></TD></TR></TABLE>>];
+  TipoClase [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+    <TR><TD BGCOLOR="#1D4ED8"><FONT COLOR="white"><B>operacion.TipoClase</B></FONT></TD></TR>
+    <TR><TD ALIGN="LEFT"><B>PK</B> TipoClaseID<BR ALIGN="LEFT"/>Nombre (UQ)<BR ALIGN="LEFT"/>DuracionMin · Intensidad<BR ALIGN="LEFT"/></TD></TR></TABLE>>];
+  Sesion [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+    <TR><TD BGCOLOR="#1D4ED8"><FONT COLOR="white"><B>operacion.Sesion</B></FONT></TD></TR>
+    <TR><TD ALIGN="LEFT"><B>PK</B> SesionID<BR ALIGN="LEFT"/><B>FK</B> TipoClaseID · EntrenadorID · SalaID<BR ALIGN="LEFT"/>FechaHoraInicio · FechaHoraFin<BR ALIGN="LEFT"/>CupoMaximo<BR ALIGN="LEFT"/></TD></TR></TABLE>>];
+  Reserva [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+    <TR><TD BGCOLOR="#1D4ED8"><FONT COLOR="white"><B>operacion.Reserva</B></FONT></TD></TR>
+    <TR><TD ALIGN="LEFT"><B>PK</B> ReservaID<BR ALIGN="LEFT"/><B>FK</B> SesionID · SocioID<BR ALIGN="LEFT"/>FechaReserva · Estado<BR ALIGN="LEFT"/></TD></TR></TABLE>>];
+  Plan [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+    <TR><TD BGCOLOR="#B45309"><FONT COLOR="white"><B>finanzas.PlanMembresia</B></FONT></TD></TR>
+    <TR><TD ALIGN="LEFT"><B>PK</B> PlanID<BR ALIGN="LEFT"/>Nombre (UQ) · Precio<BR ALIGN="LEFT"/>DuracionMeses · Descripcion<BR ALIGN="LEFT"/></TD></TR></TABLE>>];
+  Suscripcion [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+    <TR><TD BGCOLOR="#B45309"><FONT COLOR="white"><B>finanzas.Suscripcion</B></FONT></TD></TR>
+    <TR><TD ALIGN="LEFT"><B>PK</B> SuscripcionID<BR ALIGN="LEFT"/><B>FK</B> SocioID · PlanID<BR ALIGN="LEFT"/>FechaInicio · FechaFin · Estado<BR ALIGN="LEFT"/></TD></TR></TABLE>>];
+  Pago [label=<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+    <TR><TD BGCOLOR="#B45309"><FONT COLOR="white"><B>finanzas.Pago</B></FONT></TD></TR>
+    <TR><TD ALIGN="LEFT"><B>PK</B> PagoID<BR ALIGN="LEFT"/><B>FK</B> SuscripcionID<BR ALIGN="LEFT"/>FechaPago · Monto<BR ALIGN="LEFT"/>MetodoPago · Estado<BR ALIGN="LEFT"/></TD></TR></TABLE>>];
+
+  Socio -> Reserva;
+  Sesion -> Reserva;
+  TipoClase -> Sesion;
+  Entrenador -> Sesion;
+  Sala -> Sesion;
+  Socio -> Suscripcion;
+  Plan -> Suscripcion;
+  Suscripcion -> Pago;
+  LEG [label=<<TABLE BORDER="0" CELLBORDER="0"><TR><TD ALIGN="LEFT"><FONT COLOR="#0F766E">■</FONT> personas   <FONT COLOR="#1D4ED8">■</FONT> operacion   <FONT COLOR="#B45309">■</FONT> finanzas   |   Barra = lado 1 (padre) · Pata de gallo = lado N (hijo)</TD></TR></TABLE>>, fontsize=9];
+}
