@@ -101,3 +101,63 @@ CREATE TABLE operacion.Reserva (
 );
 GO
 
+/* ---------- FINANZAS ---------- */
+CREATE TABLE finanzas.PlanMembresia (
+    PlanID         INT IDENTITY(1,1) NOT NULL,
+    Nombre         NVARCHAR(50)  NOT NULL,
+    Precio         DECIMAL(8,2)  NOT NULL,
+    DuracionMeses  TINYINT       NOT NULL,
+    Descripcion    NVARCHAR(150) NULL,
+    CONSTRAINT PK_PlanMembresia PRIMARY KEY CLUSTERED (PlanID),
+    CONSTRAINT UQ_PlanMembresia_Nombre UNIQUE (Nombre),
+    CONSTRAINT CK_Plan_Precio CHECK (Precio > 0)
+);
+CREATE TABLE finanzas.Suscripcion (
+    SuscripcionID INT IDENTITY(1,1) NOT NULL,
+    SocioID       INT         NOT NULL,
+    PlanID        INT         NOT NULL,
+    FechaInicio   DATE        NOT NULL,
+    FechaFin      DATE        NOT NULL,
+    Estado        VARCHAR(10) NOT NULL,
+    CONSTRAINT PK_Suscripcion PRIMARY KEY CLUSTERED (SuscripcionID),
+    CONSTRAINT FK_Suscripcion_Socio FOREIGN KEY (SocioID) REFERENCES personas.Socio(SocioID),
+    CONSTRAINT FK_Suscripcion_Plan  FOREIGN KEY (PlanID)  REFERENCES finanzas.PlanMembresia(PlanID),
+    CONSTRAINT CK_Suscripcion_Fechas CHECK (FechaFin >= FechaInicio),
+    CONSTRAINT CK_Suscripcion_Estado CHECK (Estado IN ('Vigente','Vencida','Cancelada'))
+);
+CREATE TABLE finanzas.Pago (
+    PagoID        BIGINT IDENTITY(1,1) NOT NULL,
+    SuscripcionID INT          NOT NULL,
+    FechaPago     DATE         NOT NULL,
+    Monto         DECIMAL(10,2) NOT NULL,
+    MetodoPago    VARCHAR(15)  NOT NULL,
+    Estado        VARCHAR(10)  NOT NULL,
+    CONSTRAINT PK_Pago PRIMARY KEY CLUSTERED (PagoID),
+    CONSTRAINT FK_Pago_Suscripcion FOREIGN KEY (SuscripcionID) REFERENCES finanzas.Suscripcion(SuscripcionID),
+    CONSTRAINT CK_Pago_Monto  CHECK (Monto > 0),
+    CONSTRAINT CK_Pago_Metodo CHECK (MetodoPago IN ('Tarjeta','Efectivo','Transferencia')),
+    CONSTRAINT CK_Pago_Estado CHECK (Estado IN ('Pagado','Pendiente','Rechazado'))
+);
+GO
+
+/* ---------- AUDITORÍA (la usan los Integrantes 3 y 5) ---------- */
+CREATE TABLE auditoria.BitacoraDDL (
+    BitacoraID  INT IDENTITY(1,1) PRIMARY KEY,
+    FechaHora   DATETIME2(0) NOT NULL DEFAULT SYSDATETIME(),
+    Usuario     SYSNAME      NOT NULL DEFAULT ORIGINAL_LOGIN(),
+    Evento      NVARCHAR(100) NULL,
+    Objeto      NVARCHAR(300) NULL,
+    Sentencia   NVARCHAR(MAX) NULL
+);
+CREATE TABLE auditoria.BitacoraBackup (
+    BitacoraID  INT IDENTITY(1,1) PRIMARY KEY,
+    Tipo        VARCHAR(10)   NOT NULL,
+    Archivo     NVARCHAR(400) NULL,
+    Inicio      DATETIME2(0)  NOT NULL,
+    Fin         DATETIME2(0)  NULL,
+    Resultado   VARCHAR(10)   NOT NULL,
+    TamanoMB    DECIMAL(12,2) NULL,
+    Mensaje     NVARCHAR(2000) NULL
+);
+GO
+
